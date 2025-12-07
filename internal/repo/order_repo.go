@@ -184,3 +184,39 @@ func (r *OrderRepo) AddItemToCart(orderID, productID int, quantity int, price fl
 	_, err := r.db.Exec(query, orderID, productID, quantity, price)
 	return err
 }
+
+func (r *OrderRepo) PaginateOrders(limit, offset int) ([]models.Order, error) {
+	query := `
+        SELECT id, user_id, amount, status, created_at
+        FROM orders
+        WHERE status = 'new'
+        ORDER BY created_at ASC, id ASC
+        LIMIT $1 OFFSET $2`
+
+	rows, err := r.db.Query(query, limit, offset) //query для SELECT
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close() //предотвращает утечку соединений
+
+	var orders []models.Order
+	for rows.Next() { //идет по строкам и добавляет данные пока они есть. аналог while data
+		var order models.Order
+		err := rows.Scan(
+			&order.ID, &order.UserID, &order.Amount, &order.Status, &order.CreatedAt,
+		)
+		if err != nil {
+			log.Printf("Ошибка скана: %v", err)
+			return nil, err
+		}
+		orders = append(orders, order)
+	}
+	return orders, nil
+}
+
+func (r *OrderRepo) CountOrders() (int, error) { //подсчёт заказов для пагинации
+	query := `SELECT COUNT(*) FROM orders WHERE status = 'new'`
+	var count int
+	err := r.db.QueryRow(query).Scan(&count) //query для SELECT с 1 строкой
+	return count, err
+}

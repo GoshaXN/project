@@ -349,19 +349,22 @@ func HandleUpdates(bot *tgbotapi.BotAPI, productRepo *repo.ProductRepo, category
 				}
 			case "orders": //заказы
 				action = "orders"
-				orders, err := orderRepo.AllOrders()
-				if err != nil {
-					msg = tgbotapi.NewMessage(update.Message.Chat.ID, "Ошибка загрузки заказов")
-				} else if len(orders) == 0 {
-					msg = tgbotapi.NewMessage(update.Message.Chat.ID, "Нет заказов")
-				} else {
-					response := "Все заказы\n\n"
-					for _, order := range orders {
-						response += formatOrder(order, userRepo) + "\n"
-					}
-					msg = tgbotapi.NewMessage(update.Message.Chat.ID, response)
-
-				}
+				ShowPagination(bot, update.Message.Chat.ID, 0, 1,
+					orderRepo.CountOrders,
+					func(limit, offset int) ([]interface{}, error) {
+						orders, err := orderRepo.PaginateOrders(limit, offset)
+						if err != nil {
+							return nil, err
+						}
+						return convertToInterfaceSlice(orders)
+					},
+					func(data interface{}) string {
+						return formatOrder(data.(models.Order), userRepo)
+					},
+					"заказы",
+					"orders",
+					false)
+				continue
 			case "cart": //корзина(последний заказ)
 				action = "cart"
 				users, err := userRepo.SearchUser(fmt.Sprintf("%d", update.Message.Chat.ID))
@@ -791,8 +794,12 @@ func HandleUpdates(bot *tgbotapi.BotAPI, productRepo *repo.ProductRepo, category
 				waitingConfirm[update.Message.Chat.ID] = func() error { return categoryRepo.DeleteCategory(categoryID) }
 				msg = tgbotapi.NewMessage(update.Message.Chat.ID, fmt.Sprintf(
 					"Напишите + если хотите удалить категорию: %s, %s, ID = %d", categories[0].Name, categories[0].Description, categoryID))
-			case "start": //стартовая команда
+			case "start": //старт команда
 				action = "command start"
+				delete(SelectProduct, update.Message.Chat.ID)
+				delete(SelectCategory, update.Message.Chat.ID)
+				delete(buyingState, update.Message.Chat.ID)
+				delete(SelectQuantity, update.Message.Chat.ID)
 				msg = tgbotapi.NewMessage(update.Message.Chat.ID, "Добро пожаловать в магазин спортивного питания!\n\nВыберите нужное действие:")
 
 				keyboard := tgbotapi.NewInlineKeyboardMarkup(
@@ -820,7 +827,7 @@ func HandleUpdates(bot *tgbotapi.BotAPI, productRepo *repo.ProductRepo, category
 						tgbotapi.NewInlineKeyboardButtonData("Создать заказ", "create_order"),
 					),
 					tgbotapi.NewInlineKeyboardRow(
-						tgbotapi.NewInlineKeyboardButtonData("Ассортимент", "assortment"),
+						tgbotapi.NewInlineKeyboardButtonData("Выбрать товар для покупки", "buyproducts"),
 					),
 				)
 				msg.ReplyMarkup = keyboard
@@ -875,11 +882,18 @@ func formatOrder(order models.Order, userRepo *repo.UserRepo) string { //выв�
 	}
 	//fmt.Printf("users: %v\n", users)
 	user := users[0]
-	return fmt.Sprintf("Заказ #%d\nПользователь: %s (%d)\nСумма: %.2f\nСтатус: %s\nДата: %s\n",
+	return fmt.Sprintf("Заказ #%d\nПользователь: %s (%d)\nСумма: %.2f\nСтатус: %s\nДата создания: %s\n",
 		order.ID, user.FirstName, order.UserID, order.Amount, order.Status, order.CreatedAt.Format("02.01.2006 15:04"))
 }
 
+func formatOrderPagination(order models.Order) string {
+	return fmt.Sprintf("Заказ #%d\nПользователь ID: %d\nСумма: %.2f руб.\nСтатус: %s\nДата создания: %s\n",
+		order.ID, order.UserID, order.Amount, order.Status,
+		order.CreatedAt.Format("02.01.2006 15:04"))
+}
+
 func formatCart(order *models.Order, items []models.OrderItem, productRepo *repo.ProductRepo) string { //вывод корзины с товарами
+	var response string
 	if order == nil {
 		return "Нет заказов!"
 	}
@@ -887,7 +901,6 @@ func formatCart(order *models.Order, items []models.OrderItem, productRepo *repo
 		return "Пустая корзина"
 	}
 
-	response := "Ваш заказ:\n\n"
 	total := 0.0
 	for _, item := range items {
 		sum := item.Price * float64(item.Quantity)
@@ -1047,7 +1060,9 @@ func handleCallback(bot *tgbotapi.BotAPI, callback *tgbotapi.CallbackQuery, prod
 		if data == "confirm" && hasProduct { //обработка добавления товара в корзину с укаанным количеством
 			action = "confirm_purchase"
 			var quantity int = 1
-			quantity = SelectQuantity[ChatID]
+			if quantity < SelectQuantity[ChatID] {
+				quantity = SelectQuantity[ChatID]
+			}
 			fmt.Printf("quantity: %d", quantity)
 			users, err := userRepo.SearchUser(fmt.Sprintf("%d", ChatID))
 			if err != nil || len(users) == 0 {
@@ -1083,33 +1098,35 @@ func handleCallback(bot *tgbotapi.BotAPI, callback *tgbotapi.CallbackQuery, prod
 						if err != nil {
 							msg = tgbotapi.NewMessage(ChatID, "Ошибка добавления товара в корзину: "+err.Error())
 						} else {
-							var totalSum float64 //обновление суммы
-							for _, item := range cart.Items {
-								totalSum += item.Price * float64(item.Quantity)
+							updatedCart, err := orderRepo.DetailCart(int64(user.ID))
+							if err != nil {
+								msg = tgbotapi.NewMessage(ChatID, "Ошибка получения обновленной корзины: "+err.Error())
+							} else {
+								var totalSum float64 //обновление суммы
+								for _, item := range updatedCart.Items {
+									totalSum += item.Price * float64(item.Quantity)
+								}
+								msg1 := tgbotapi.NewMessage(ChatID,
+									fmt.Sprintf("Товар добавлен в корзину\n\nЗаказ: #%d\nТовар: %s\nЦена: %.2f руб.\nКоличество: %d\nСумма: %.2f руб.\nСумма: %.2f руб.",
+										cart.Order.ID, product.Name, product.Price, quantity,
+										product.Price*float64(quantity), totalSum))
+								delete(SelectProduct, ChatID) //очищается выбранный товар
+								delete(buyingState, ChatID)   //очищается состояние покупки
+								answermsg := tgbotapi.NewMessage(ChatID, "Хотите выбрать ещё товары?")
+								keyboard := tgbotapi.NewInlineKeyboardMarkup(
+									tgbotapi.NewInlineKeyboardRow(
+										tgbotapi.NewInlineKeyboardButtonData("Да", "buyproducts"),
+										tgbotapi.NewInlineKeyboardButtonData("Нет", "cart"),
+									),
+								)
+								answermsg.ReplyMarkup = keyboard
+								bot.Send(msg1)
+								bot.Send(answermsg)
 							}
-							totalSum += product.Price * float64(quantity)
-
-							msg1 := tgbotapi.NewMessage(ChatID,
-								fmt.Sprintf("Товар добавлен в корзину\n\nЗаказ: #%d\nТовар: %s\nЦена: %.2f руб.\nКоличество: %d\nСумма: %.2f руб.\nСумма: %.2f руб.",
-									cart.Order.ID, product.Name, product.Price, quantity,
-									product.Price*float64(quantity), totalSum))
-							delete(SelectProduct, ChatID) //очищается выбранный товар
-							delete(buyingState, ChatID)   //очищается состояние покупки
-							answermsg := tgbotapi.NewMessage(ChatID, "Хотите выбрать ещё товары?")
-							keyboard := tgbotapi.NewInlineKeyboardMarkup(
-								tgbotapi.NewInlineKeyboardRow(
-									tgbotapi.NewInlineKeyboardButtonData("Да", "buyproducts"),
-									tgbotapi.NewInlineKeyboardButtonData("Нет", "start"),
-								),
-							)
-							answermsg.ReplyMarkup = keyboard
-							bot.Send(msg1)
-							bot.Send(answermsg)
 						}
 					}
 				}
 			}
-
 			editMsg := tgbotapi.NewEditMessageReplyMarkup(
 				ChatID,
 				MessageID,
@@ -1161,7 +1178,7 @@ func handleCallback(bot *tgbotapi.BotAPI, callback *tgbotapi.CallbackQuery, prod
 		"products": {
 			CountFunc: productRepo.CountProducts,
 			PaginationFunc: func(limit, offset int) ([]interface{}, error) {
-				products, err := productRepo.PaginateProduct(limit, offset)
+				products, err := productRepo.PaginateProducts(limit, offset)
 				if err != nil {
 					return nil, err
 				}
@@ -1174,7 +1191,7 @@ func handleCallback(bot *tgbotapi.BotAPI, callback *tgbotapi.CallbackQuery, prod
 		"buyproducts": {
 			CountFunc: productRepo.CountProducts,
 			PaginationFunc: func(limit, offset int) ([]interface{}, error) {
-				products, err := productRepo.PaginateProduct(limit, offset)
+				products, err := productRepo.PaginateProducts(limit, offset)
 				if err != nil {
 					return nil, err
 				}
@@ -1208,6 +1225,19 @@ func handleCallback(bot *tgbotapi.BotAPI, callback *tgbotapi.CallbackQuery, prod
 			},
 			formatFunc:   func(data interface{}) string { return formatCategory(data.(models.Category)) },
 			title:        "категории",
+			showKeyboard: false,
+		},
+		"orders": {
+			CountFunc: orderRepo.CountOrders,
+			PaginationFunc: func(limit, offset int) ([]interface{}, error) {
+				orders, err := orderRepo.PaginateOrders(limit, offset)
+				if err != nil {
+					return nil, err
+				}
+				return convertToInterfaceSlice(orders)
+			},
+			formatFunc:   func(data interface{}) string { return formatOrderPagination(data.(models.Order)) },
+			title:        "заказы",
 			showKeyboard: false,
 		},
 		"buycategories": {
@@ -1291,7 +1321,7 @@ func handleCallback(bot *tgbotapi.BotAPI, callback *tgbotapi.CallbackQuery, prod
 
 	}
 
-	if data == "products" || data == "users" || data == "buyproducts" || data == "buycategories" ||
+	if data == "products" || data == "users" || data == "buyproducts" || data == "buycategories" || data == "orders" ||
 		strings.HasPrefix(data, "prev_") || strings.HasPrefix(data, "next_") || strings.HasPrefix(data, "current_") {
 		//пропускаем обработку пагинации во избежание возникновения ошибок ибо оно обработано уже
 	} else {
@@ -1388,8 +1418,6 @@ func handleCallback(bot *tgbotapi.BotAPI, callback *tgbotapi.CallbackQuery, prod
 
 		case "orders": //заказы
 			action = "orders"
-			//search := callback.Message.Chat.ID
-			//fmt.Printf("search by id %d\n", search)
 			users, err := userRepo.SearchUser(fmt.Sprintf("%d", callback.Message.Chat.ID))
 			if err != nil {
 				fmt.Printf("err: %v", users)
@@ -1401,7 +1429,6 @@ func handleCallback(bot *tgbotapi.BotAPI, callback *tgbotapi.CallbackQuery, prod
 			}
 			user := users[0]
 			orders, err := orderRepo.UserOrder(user.ID)
-			//fmt.Printf("user for serach: %v\n\n", orders)
 			if err != nil {
 				msg = tgbotapi.NewMessage(ChatID, "Ошибка загрузки заказов")
 			} else if len(orders) == 0 {
@@ -1412,7 +1439,7 @@ func handleCallback(bot *tgbotapi.BotAPI, callback *tgbotapi.CallbackQuery, prod
 					response += formatOrder(order, userRepo) + "\n"
 				}
 				msg = tgbotapi.NewMessage(ChatID, response)
-
+				bot.Send(msg)
 			}
 		case "create_order": //создание корзины
 			action = "create_order"
@@ -1474,18 +1501,27 @@ func handleCallback(bot *tgbotapi.BotAPI, callback *tgbotapi.CallbackQuery, prod
 				} else if cart == nil {
 					msg = tgbotapi.NewMessage(ChatID, "Нет заказов!")
 				} else {
-					//log.Printf("Cart found: ID=%d, UserID=%d, Status=%s", cart.Order.ID, cart.Order.UserID, cart.Order.Status)
-					response := "Ваши заказы:\n\n"
-					response = formatCart(&cart.Order, cart.Items, productRepo)
-					msg = tgbotapi.NewMessage(ChatID, response)
-					keyboard := tgbotapi.NewInlineKeyboardMarkup(
-						tgbotapi.NewInlineKeyboardRow(
-							tgbotapi.NewInlineKeyboardButtonData("Подтвердить заказ", "confirm_order"),
-							tgbotapi.NewInlineKeyboardButtonData("Вернуться к покупкам", "buyproducts"),
-						))
-					msg.ReplyMarkup = keyboard
+					response := "Ваш заказ:\n\n"
+					if formatCart(&cart.Order, cart.Items, productRepo) == "Пустая корзина" {
+						msg1 := tgbotapi.NewMessage(ChatID, "Пустая корзина")
+						bot.Send(msg1)
+						return
+					} else {
+						response += formatCart(&cart.Order, cart.Items, productRepo)
+						msg = tgbotapi.NewMessage(ChatID, response)
+						keyboard := tgbotapi.NewInlineKeyboardMarkup(
+							tgbotapi.NewInlineKeyboardRow(
+								tgbotapi.NewInlineKeyboardButtonData("Подтвердить заказ", "confirm_order"),
+								tgbotapi.NewInlineKeyboardButtonData("Вернуться к покупкам", "buyproducts"),
+							))
+						msg.ReplyMarkup = keyboard
+					}
 				}
 			}
+		case "help":
+			action = "command help"
+			msg = tgbotapi.NewMessage(ChatID,
+				"/start - начало\n/products - все товары\n/categories - все категории\n/search [product/user] [текст] - поиск товаров/пользователей\n/help - помощь\n/users - список пользователей")
 
 		case "start": //старт команда
 			action = "command start"

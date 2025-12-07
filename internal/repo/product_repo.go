@@ -164,7 +164,7 @@ func (r *ProductRepo) DeleteProduct(productID int) error {
 	return nil
 }
 
-func (r *ProductRepo) PaginateProduct(limit, offset int) ([]models.Product, error) {
+func (r *ProductRepo) PaginateProducts(limit, offset int) ([]models.Product, error) {
 	query := `
         SELECT id, name, description, price, quantity, category_id, weight, flavor, servings, is_active, created_at
         FROM products
