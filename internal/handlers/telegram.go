@@ -23,7 +23,7 @@ type JWTConfig struct {
 var (
 	jwtConfig = JWTConfig{
 		SecretKey:     "secret_key",
-		TokenDuration: time.Minute, //1 минуту
+		TokenDuration: time.Minute * 10, //10 минут
 	}
 	userTokens = make(map[int64]string) // Храним токены в памяти (в продакшене используйте Redis/БД)
 )
@@ -75,9 +75,9 @@ func GenerateToken(user *models.User) (string, error) {
 		Username: user.Username,
 		Role:     user.Role,
 		RegisteredClaims: jwt.RegisteredClaims{
-			ExpiresAt: jwt.NewNumericDate(expirationTime),
-			IssuedAt:  jwt.NewNumericDate(time.Now()),
-			Subject:   strconv.FormatInt(user.ID, 10),
+			ExpiresAt: jwt.NewNumericDate(expirationTime), //когда истечёт
+			IssuedAt:  jwt.NewNumericDate(time.Now()),     //текущее время
+			Subject:   strconv.FormatInt(user.ID, 10),     //UserID
 		},
 	}
 
@@ -85,7 +85,7 @@ func GenerateToken(user *models.User) (string, error) {
 	return token.SignedString([]byte(jwtConfig.SecretKey))
 }
 
-func VerifyToken(tokenString string) (*Claims, error) { //верификация токена
+func VerifyToken(tokenString string) (*Claims, error) { //верификация токена: преобразовывает в данные и проверяет на валидность
 	claims := &Claims{}
 
 	token, err := jwt.ParseWithClaims(tokenString, claims, func(token *jwt.Token) (interface{}, error) {
@@ -102,7 +102,7 @@ func VerifyToken(tokenString string) (*Claims, error) { //верификация
 }
 
 func AuthenticateUser(tokenString string, userRepo *repo.UserRepo) (*models.User, error) { //аутентефикация по токену
-	claims, err := VerifyToken(tokenString)
+	claims, err := VerifyToken(tokenString) //получение юзера из бд по токену
 	if err != nil {
 		return nil, err
 	}
@@ -116,34 +116,27 @@ func AuthenticateUser(tokenString string, userRepo *repo.UserRepo) (*models.User
 	return &users[0], nil
 }
 
-func AuthMiddleware(handler func(bot *tgbotapi.BotAPI, update tgbotapi.Update, user *models.User, userRepo *repo.UserRepo)) func(bot *tgbotapi.BotAPI, update tgbotapi.Update, userRepo *repo.UserRepo) {
+func AuthMiddleware(handler func(bot *tgbotapi.BotAPI, update tgbotapi.Update, // аутентефикация юзера и если с токеном - выполняет переданную функцию
+	user *models.User, userRepo *repo.UserRepo)) func(bot *tgbotapi.BotAPI, update tgbotapi.Update, userRepo *repo.UserRepo) {
+
 	return func(bot *tgbotapi.BotAPI, update tgbotapi.Update, userRepo *repo.UserRepo) { //аутентефикация в боте
-		var user *models.User
-		var err error
 		token := GetTokenFromUpdate(update)
-		if token != "" {
-			delete(userTokens, GetChatID(update))
-			user, err = AuthenticateUser(token, userRepo)
-			if err != nil {
-				msg := tgbotapi.NewMessage(GetChatID(update), "Используйте команду /login Для аутентификации")
-				bot.Send(msg)
-				return
-			}
-			userTokens[GetChatID(update)] = token
-		} else {
-			chatID := GetChatID(update)
-			users, err := userRepo.SearchUser(fmt.Sprintf("%d", chatID))
-			if err != nil || len(users) == 0 {
-				msg := tgbotapi.NewMessage(GetChatID(update), "Используйте команду /login Для аутентификации")
-				bot.Send(msg)
-				return
-			}
-			user = &users[0]
+		if token == "" {
+			msg := tgbotapi.NewMessage(GetChatID(update), "Используйте команду /login")
+			bot.Send(msg)
+			return
 		}
-		handler(bot, update, user, userRepo)
+		user, err := AuthenticateUser(token, userRepo) //получение юзера из бд по токену
+		if err != nil {
+			msg := tgbotapi.NewMessage(GetChatID(update), "Токен недействителен /login")
+			bot.Send(msg)
+			return
+		}
+		userTokens[GetChatID(update)] = token
+
+		handler(bot, update, user, userRepo) //вызов обработчика
 	}
 }
-
 func GetTokenFromUpdate(update tgbotapi.Update) string { //извлечение токена из сообщения
 	ChatID := GetChatID(update)
 	if ChatID > 0 {
@@ -394,507 +387,29 @@ func HandleUpdates(bot *tgbotapi.BotAPI, productRepo *repo.ProductRepo, category
 	userRepo *repo.UserRepo, orderRepo *repo.OrderRepo) {
 	u := tgbotapi.NewUpdate(0)
 	u.Timeout = 60
-
+	var msg tgbotapi.MessageConfig
 	updates := bot.GetUpdatesChan(u)
 
-	for update := range updates {
-		if update.CallbackQuery != nil {
-			handleCallback(bot, update.CallbackQuery, productRepo, categoryRepo, userRepo, orderRepo)
-			continue
-		}
-
-		if update.Message == nil {
-			continue
-		}
-
-		userID := update.Message.From.ID
-		userName := update.Message.From.FirstName
-		if update.Message.From.UserName != "" {
-			userName = update.Message.From.UserName
-		}
-		var msg tgbotapi.MessageConfig
-		var action string
-
-		if waitingProduct[update.Message.Chat.ID] && !update.Message.IsCommand() { //проверка на ожидание для возможности поиска товара 2м сообщением
-			searchQuery := update.Message.Text
-			action = "search product 2nd msg"
-
-			products, err := productRepo.SearchProduct(searchQuery)
-			if err != nil {
-				log.Printf("Ошибка: %v", err)
-				msg = tgbotapi.NewMessage(update.Message.Chat.ID, "Ошибка поиска")
-			} else if len(products) == 0 {
-				msg = tgbotapi.NewMessage(update.Message.Chat.ID, "По запросу: "+searchQuery+" товаров не найдено")
-			} else {
-				response := "Результаты поиска по запросу: " + searchQuery + "\n\n"
-				for _, product := range products {
-					response += formatProduct(product) + "\n"
-				}
-				msg = tgbotapi.NewMessage(update.Message.Chat.ID, response)
-			}
-			waitingProduct[update.Message.Chat.ID] = false // сбрасываем ожидание
-
-		} else if waitingUser[update.Message.Chat.ID] && !update.Message.IsCommand() { //проверка на ожидание для возможности поиска юзера 2м сообщением
-			searchQuery := update.Message.Text
-			action = "search user 2nd msg"
-
-			users, err := userRepo.SearchUser(searchQuery)
-			if err != nil {
-				log.Printf("Ошибка: %v", err)
-				msg = tgbotapi.NewMessage(update.Message.Chat.ID, "Ошибка поиска")
-			} else if len(users) == 0 {
-				msg = tgbotapi.NewMessage(update.Message.Chat.ID, "По запросу: "+searchQuery+" пользователей не найдено")
-			} else {
-				response := "Результаты поиска по запросу: " + searchQuery + "\n\n"
-				for _, user := range users {
-					response += formatUser(user) + "\n"
-				}
-				msg = tgbotapi.NewMessage(update.Message.Chat.ID, response)
-			}
-			waitingUser[update.Message.Chat.ID] = false // сбрасываем ожидание
-
-		} else if waitingCategory[update.Message.Chat.ID] && !update.Message.IsCommand() { //проверка на ожидание для возможности поиска категории 2м сообщением
-			searchQuery := update.Message.Text
-			action = "search category 2nd msg"
-
-			categories, err := categoryRepo.SearchCategory(searchQuery)
-			if err != nil {
-				log.Printf("Ошибка: %v", err)
-				msg = tgbotapi.NewMessage(update.Message.Chat.ID, "Ошибка поиска")
-			} else if len(categories) == 0 {
-				msg = tgbotapi.NewMessage(update.Message.Chat.ID, "По запросу: "+searchQuery+" категорий  не найдено")
-			} else {
-				response := "Результаты поиска по запросу: " + searchQuery + "\n\n"
-				for _, categories := range categories {
-					response += formatCategory(categories) + "\n"
-				}
-				msg = tgbotapi.NewMessage(update.Message.Chat.ID, response)
-			}
-			waitingCategory[update.Message.Chat.ID] = false // сбрасываем ожидание
-		} else if deleteFunc := waitingConfirm[update.Message.Chat.ID]; deleteFunc != nil {
-			confirm := update.Message.Text
-			if confirm == "+" {
-				if err := deleteFunc(); err != nil {
-					msg = tgbotapi.NewMessage(update.Message.Chat.ID, "Ошибка удаления: "+err.Error())
-				} else {
-					msg = tgbotapi.NewMessage(update.Message.Chat.ID, "Успешное удаление!")
-				}
-				waitingConfirm[update.Message.Chat.ID] = nil
-			} else {
-				msg = tgbotapi.NewMessage(update.Message.Chat.ID, "Отмена удаления")
-				waitingConfirm[update.Message.Chat.ID] = nil
-			}
-		} else if update.Message.IsCommand() { //отбираем все после /
-
-			switch update.Message.Command() {
-			case "register":
-				args := update.Message.CommandArguments()
-				action = "register"
-
-				if args == "" {
-					msg = tgbotapi.NewMessage(update.Message.Chat.ID,
-						"Используйте команду: /register password|UserID для регистрации")
-					break
-				}
-				data := strings.Split(args, "|")
-				var password string
-				var TelegramID int64
-				var err error
-				if len(data) == 1 { //введён только пароль
-					password = data[0]
-					TelegramID = update.Message.From.ID
-				} else if len(data) == 2 { //введён и пароль и юзер
-					password = data[0]
-					TelegramID, err = strconv.ParseInt(data[1], 10, 64)
-					if err != nil {
-						msg = tgbotapi.NewMessage(update.Message.Chat.ID,
-							"Ошибка: Telegram ID должен быть числом")
-						break
-					}
-				} else { //обработка некорректной команды
-					msg = tgbotapi.NewMessage(update.Message.Chat.ID,
-						"Некорректный формат. Используйте: /register password|TelegramID")
-					break
-				}
-				users, err := userRepo.SearchUserTGID(TelegramID)
-
-				if err != nil && !strings.Contains(err.Error(), "user not found") { //ошибка отсутствия юзера
-					msg = tgbotapi.NewMessage(update.Message.Chat.ID,
-						fmt.Sprintf("Ошибка поиска пользователя: %v", err))
-					break
-				}
-
-				if users != nil { //обработка существующего пользователя
-					if users.Password != "" { //вход по паролю
-						msg = tgbotapi.NewMessage(update.Message.Chat.ID,
-							"Пользователь уже зарегистрирован. Войдите: /login password|TelegramID")
-						msgToUser := tgbotapi.NewMessage(TelegramID,
-							fmt.Sprintf("Напоминание пароля для аккаунта ID=%d", users.ID))
-						bot.Send(msgToUser)
-					} else { //обновление пароля
-						err = userRepo.UpdatePassword(int(users.ID), password)
-						if err != nil {
-							msg = tgbotapi.NewMessage(update.Message.Chat.ID,
-								fmt.Sprintf("Ошибка установки пароля: %v", err))
-							break
-						}
-						token, err := GenerateToken(users)
-						if err != nil {
-							msg = tgbotapi.NewMessage(update.Message.Chat.ID,
-								fmt.Sprintf("Ошибка генерации токена: %v", err))
-							break
-						}
-						userTokens[update.Message.Chat.ID] = token
-						msg = tgbotapi.NewMessage(update.Message.Chat.ID,
-							fmt.Sprintf("Пароль установлен для пользователя %s. Сессия активна 10 минут.",
-								users.FirstName))
-					}
-				} else { //создание нового пользователя
-					username := update.Message.From.UserName
-					if username == "" {
-						username = strconv.FormatInt(TelegramID, 10)
-					}
-
-					NewUser := &models.User{
-						TelegramID: TelegramID,
-						Username:   username,
-						FirstName:  update.Message.From.FirstName,
-						Phone:      "",
-						Email:      "",
-						Role:       "user",
-					}
-					err = userRepo.CreateUser(NewUser, password)
-					if err != nil {
-						msg = tgbotapi.NewMessage(update.Message.Chat.ID,
-							fmt.Sprintf("Ошибка создания пользователя: %v", err))
-						break
-					}
-					token, err := GenerateToken(NewUser)
-					if err != nil {
-						msg = tgbotapi.NewMessage(update.Message.Chat.ID,
-							fmt.Sprintf("Ошибка генерации токена: %v", err))
-						break
-					}
-
-					userTokens[update.Message.Chat.ID] = token
-					msgToUser := tgbotapi.NewMessage(TelegramID,
-						fmt.Sprintf("Ваш пароль для аккаунта ID=%d установлен", NewUser.ID))
-					bot.Send(msgToUser)
-
-					msg = tgbotapi.NewMessage(update.Message.Chat.ID,
-						fmt.Sprintf("Пользователь %s успешно зарегистрирован. Сессия активна 10 минут.",
-							NewUser.FirstName))
-				}
-			case "login":
-				action = "login"
-				args := update.Message.CommandArguments()
-				if args == "" {
-					msg = tgbotapi.NewMessage(update.Message.Chat.ID,
-						"Используйте команду:\n/login password|TelegramID")
-					break
-				}
-				data := strings.Split(args, "|")
-				var password string
-				var TelegramID int64
-				var err error
-				if len(data) == 1 { // вход в текущий аккаунт
-					password = data[0]
-					TelegramID = update.Message.From.ID
-				} else if len(data) == 2 { // вход в указанный аккаунт
-					password = data[0]
-					TelegramID, err = strconv.ParseInt(data[1], 10, 64)
-					if err != nil {
-						msg = tgbotapi.NewMessage(update.Message.Chat.ID,
-							"Ошибка: Telegram ID должен быть числом")
-						break
-					}
-				} else {
-					msg = tgbotapi.NewMessage(update.Message.Chat.ID,
-						"Некорректный формат. Используйте: /login password|TelegramID")
-					break
-				}
-				user, err := userRepo.SearchUserTGID(TelegramID)
-				if err != nil {
-					if strings.Contains(err.Error(), "user not found") {
-						msg = tgbotapi.NewMessage(update.Message.Chat.ID,
-							"Пользователь не найден. Пройдите регистрацию: /register password|TelegramID")
-					} else {
-						msg = tgbotapi.NewMessage(update.Message.Chat.ID,
-							fmt.Sprintf("Ошибка поиска пользователя: %v", err))
-					}
-					break
-				}
-				if user.Password == "" {
-					msg = tgbotapi.NewMessage(update.Message.Chat.ID, "Отсутствует пароль. Введите\n/register password|TelegramID для установки пароля")
-					break
-				}
-				if !utils.CheckPasswordHash(password, user.Password) {
-					msg = tgbotapi.NewMessage(update.Message.Chat.ID, "Неверный пароль!")
-					break
-				}
-				token, err := GenerateToken(user)
-				if err != nil {
-					msg = tgbotapi.NewMessage(update.Message.Chat.ID,
-						fmt.Sprintf("Ошибка генерации токена: %v", err))
-					break
-				}
-				userTokens[update.Message.Chat.ID] = token
-				msg = tgbotapi.NewMessage(update.Message.Chat.ID,
-					fmt.Sprintf("Здравствуйте, %s!\nВаш статус: %s\nID: %d\nСессия активна 10 минут",
-						user.FirstName, user.Role, user.ID))
-			case "token":
-				action = "token"
-				token := GetTokenFromUpdate(update)
-				var user *models.User
-				var err error
-
-				if token != "" { //активный токен
-					user, err = AuthenticateUser(token, userRepo)
-					if err != nil {
-						msg = tgbotapi.NewMessage(update.Message.Chat.ID, "Токен недействителен. Сначала войдите: /login")
-						break
-					}
-				} else { //по отправителю
-					TelegramID := update.Message.Chat.ID
-					user, err = userRepo.SearchUserTGID(TelegramID)
-					if err != nil {
-						msg = tgbotapi.NewMessage(update.Message.Chat.ID, "Вы не авторизованы. Сначала войдите: /login")
-						break
-					}
-				}
-				NewToken, err := GenerateToken(user)
-				if err != nil {
-					msg = tgbotapi.NewMessage(update.Message.Chat.ID,
-						fmt.Sprintf("Ошибка генерации токена: %v", err))
-					break
-				}
-				userTokens[update.Message.Chat.ID] = NewToken
-				msg = tgbotapi.NewMessage(update.Message.Chat.ID, fmt.Sprintf("Ваш новый токен: %s\nДействует 10 минут", NewToken))
-				msg.ParseMode = "Markdown"
-
-			case "logout":
-				action = "logout"
-				delete(userTokens, update.Message.Chat.ID)
-				delete(SelectProduct, update.Message.Chat.ID)
-				delete(SelectCategory, update.Message.Chat.ID)
-				delete(buyingState, update.Message.Chat.ID)
-				delete(SelectQuantity, update.Message.Chat.ID)
-				delete(waitingProduct, update.Message.Chat.ID)
-				delete(waitingUser, update.Message.Chat.ID)
-				delete(waitingCategory, update.Message.Chat.ID)
-				delete(waitingConfirm, update.Message.Chat.ID)
-				delete(paginationState, update.Message.Chat.ID)
-				msg = tgbotapi.NewMessage(update.Message.Chat.ID, "Успешный выхох из программы. Вход: /login")
-			case "create_order": //создание заказа
-				action = "create_order"
-				user1 := strconv.Itoa(int(update.Message.From.ID))
-				users, err := userRepo.SearchUser(user1)
-				if err != nil {
-					msg = tgbotapi.NewMessage(update.Message.Chat.ID, fmt.Sprintf("Ошибка поиска пользователя: %v", err))
-					break
-				}
-				if len(users) == 0 {
-					msg = tgbotapi.NewMessage(update.Message.Chat.ID, "Пользователь не найден")
-					break
-				}
-				user := &users[0]
-				token, err := GenerateToken(user)
-				if err != nil {
-					msg = tgbotapi.NewMessage(update.Message.Chat.ID, fmt.Sprintf("Ошибка генерации токена: %v", err))
-					break
-				}
-				err = CheckPermissions(userRepo, token, 1)
-				if err != nil {
-					msg = tgbotapi.NewMessage(update.Message.Chat.ID, "Недостаточно прав доступа")
-					break
-				}
-				order, err := orderRepo.CreateOrder(user.ID)
-				if err != nil {
-					msg = tgbotapi.NewMessage(update.Message.Chat.ID, "Ошибка создания заказа")
-				} else {
-					response := fmt.Sprintf("Заказ создан\nНомер заказа: %d", order.ID)
-					msg = tgbotapi.NewMessage(update.Message.Chat.ID, response)
-				}
-			case "orders": //все заказы
-				action = "orders"
-				ShowPagination(bot, update.Message.Chat.ID, 0, 1,
-					orderRepo.CountOrders,
-					func(limit, offset int) ([]interface{}, error) {
-						orders, err := orderRepo.PaginateOrders(limit, offset)
-						if err != nil {
-							return nil, err
-						}
-						return convertToInterfaceSlice(orders)
-					},
-					func(data interface{}) string {
-						return formatOrder(data.(models.Order), userRepo)
-					},
-					"заказы",
-					"orders",
-					false)
-				continue
-			case "cart": //корзина(последний заказ)
-				action = "cart"
-				users, err := userRepo.SearchUser(fmt.Sprintf("%d", update.Message.Chat.ID))
-				if err != nil {
-					log.Printf("Error loading cart: %v", err)
-					msg = tgbotapi.NewMessage(update.Message.Chat.ID, "Ошибка загрузки корзины!")
-				} else if users == nil {
-					msg = tgbotapi.NewMessage(update.Message.Chat.ID, "Нет пользователя!")
-				} else {
-					user := users[0]
-					cart, err := orderRepo.DetailCart(int64(user.ID))
-					if err != nil {
-						log.Printf("Error loading cart: %v", err)
-						msg = tgbotapi.NewMessage(update.Message.Chat.ID, "Ошибка загрузки корзины!")
-					} else if cart == nil {
-						msg = tgbotapi.NewMessage(update.Message.Chat.ID, "Нет заказов!")
-					} else {
-						response := "Ваша корзина:\n\n"
-						response = formatCart(&cart.Order, cart.Items, productRepo)
-						msg = tgbotapi.NewMessage(update.Message.Chat.ID, response)
-					}
-				}
-			case "users": //юзеры
-				action = "users"
-				users, err := userRepo.AllUsers()
-				if err != nil {
-					msg = tgbotapi.NewMessage(update.Message.Chat.ID, "Ошибка загрузки юзеров")
-				} else {
-					response := "Все юзеры\n\n"
-					for _, user := range users {
-						response += formatUser(user) + "\n"
-					}
-					msg = tgbotapi.NewMessage(update.Message.Chat.ID, response)
-				}
-			case "search_user": //поиск юзера
-				action = "search_user"
-				searchQuery := update.Message.CommandArguments()
-
-				if searchQuery == "" {
-					msg = tgbotapi.NewMessage(update.Message.Chat.ID, "Укажите имя пользователя для поиска")
-					waitingUser[update.Message.Chat.ID] = true // поднимаем флаг если не будет поиска 1м сообщением
-				} else {
-					users, err := userRepo.SearchUser(searchQuery)
-					if err != nil {
-						msg = tgbotapi.NewMessage(update.Message.Chat.ID, "Ошибка поиска")
-					} else if len(users) == 0 {
-						msg = tgbotapi.NewMessage(update.Message.Chat.ID, "По запросу: "+searchQuery+" пользователей не найдено")
-					} else {
-						response := "Результаты поиска по запросу: " + searchQuery + "\n\n"
-						for _, user := range users {
-							response += formatUser(user) + "\n"
-						}
-						msg = tgbotapi.NewMessage(update.Message.Chat.ID, response)
-					}
-				}
-			case "create_user": //создание пользователя
-				action = "create_user"
-				var password string
-				data := strings.Split(update.Message.CommandArguments(), "|")
-
-				if len(data) < 6 {
-					msg = tgbotapi.NewMessage(update.Message.Chat.ID,
-						"Некорректный формат. Используйте\n /create_user telegram_id|telegram_username|first_name|phone|email|role|password\n")
-					break
-				}
-				TelegramID, err := strconv.ParseInt(data[0], 10, 64)
-				if err != nil {
-					msg = tgbotapi.NewMessage(update.Message.Chat.ID, "Ошибка: telegram_id должен быть числом")
-					break
-				}
-
-				user := &models.User{
-					TelegramID: TelegramID,
-					Username:   data[1],
-					FirstName:  data[2],
-					Phone:      data[3],
-					Email:      data[4],
-					Role:       data[5],
-				}
-				if len(data) > 6 {
-					password = data[6]
-				}
-
-				err = userRepo.CreateUser(user, password)
-				if err != nil {
-					msg = tgbotapi.NewMessage(update.Message.Chat.ID, fmt.Sprintf("Ошибка создания пользователя: %v", err))
-				} else {
-					msg = tgbotapi.NewMessage(update.Message.Chat.ID,
-						fmt.Sprintf("Создан пользователь\nID: %d\nTelegramID: %d\nНик: %s\nИмя: %s\nТелефон: %v\nПочта: %s\nРоль: %s\nПароль: %s",
-							user.ID, user.TelegramID, user.Username, user.FirstName,
-							user.Phone, user.Email, user.Role, password))
-				}
-
-			case "delete_user": //удаление пользователя
-				action = "delete_user"
-				data := strings.Fields(update.Message.CommandArguments())
-				if len(data) == 0 {
-					msg = tgbotapi.NewMessage(update.Message.Chat.ID, "Отправьте команду в формате /delete_user user_id")
-					break
-				}
-				userID, err := strconv.Atoi(data[0])
-				if err != nil {
-					msg = tgbotapi.NewMessage(update.Message.Chat.ID, "ID должно быть числом")
-					break
-				}
-				users, err := userRepo.SearchUser(fmt.Sprintf("%d", userID))
-				if err != nil || len(users) == 0 {
-					msg = tgbotapi.NewMessage(update.Message.Chat.ID, "Пользователь не найден")
-					break
-				}
-				waitingConfirm[update.Message.Chat.ID] = func() error { return userRepo.DeleteUser(userID) }
-				msg = tgbotapi.NewMessage(update.Message.Chat.ID, fmt.Sprintf(
-					"Напишите + если хотите удалить пользователя: %s, %s, ID = %d", users[0].FirstName, users[0].Username, userID))
-
-			case "update_user": //обновление пользователя
-				action = "update_user"
-				data := strings.Split(update.Message.CommandArguments(), "|")
-
-				if len(data) < 7 {
-					msg = tgbotapi.NewMessage(update.Message.Chat.ID,
-						"Некорректный формат. Используйте\n /update_user id|telegram_id|telegram_username|first_name|phone|email|role\nНеизменённые поля заполнять символом *")
-					break
-				}
-
-				users, err := userRepo.SearchUser(data[0])
-				if err != nil || len(users) == 0 {
-					msg = tgbotapi.NewMessage(update.Message.Chat.ID, "Пользователь не найден")
-					break
-				}
-				user := &users[0]
-
-				NewUser := []*string{&user.Username, &user.FirstName, &user.Phone, &user.Email, &user.Role} //строковые поля обрабатываются
-
-				for i := 2; i < len(data) && i-2 < len(NewUser); i++ {
-					if data[i] != "*" {
-						*NewUser[i-2] = data[i]
-					}
-				}
-
-				if data[1] != "*" { //обработка числового значения TG_ID
-					TelegramID, _ := strconv.ParseInt(data[1], 10, 64)
-					user.TelegramID = TelegramID
-				}
-
-				err = userRepo.UpdateUser(user)
-				if err != nil {
-					msg = tgbotapi.NewMessage(update.Message.Chat.ID, "Ошибка изменения пользователя: "+err.Error())
-					break
-				} else {
-					msg = tgbotapi.NewMessage(update.Message.Chat.ID,
-						fmt.Sprintf("Изменен пользователь\nID: %d\nTelegramID: %d\nНик: %s\nИмя: %s\nТелефон: %v\nПочта: %s\nРоль: %s",
-							user.ID, user.TelegramID, user.Username, user.FirstName,
-							user.Phone, user.Email, user.Role))
-				}
-			case "create_product": //содание товара
-				action = "create_product"
+	commandHandlers := map[string]struct {
+		AuthRequired bool
+		AdminOnly    bool
+		Action       string
+		Handler      func(bot *tgbotapi.BotAPI, update tgbotapi.Update,
+			user *models.User, userRepo *repo.UserRepo)
+	}{
+		"create_product": {
+			AuthRequired: true,
+			AdminOnly:    true,
+			Action:       "create_product",
+			Handler: func(bot *tgbotapi.BotAPI, update tgbotapi.Update,
+				user *models.User, userRepo *repo.UserRepo) {
 				data := strings.Split(update.Message.CommandArguments(), "|")
 
 				if len(data) < 10 {
 					msg = tgbotapi.NewMessage(update.Message.Chat.ID,
 						"Некорректный формат. Используйте\n /create_product name|description|flawor|brand|price|quantity|category_id|weight|servings|is_active\n")
-					break
+					bot.Send(msg)
+					return
 				}
 
 				product := &models.Product{}
@@ -918,61 +433,96 @@ func HandleUpdates(bot *tgbotapi.BotAPI, productRepo *repo.ProductRepo, category
 
 				err := productRepo.CreateProduct(product)
 				if err != nil {
-					msg = tgbotapi.NewMessage(update.Message.Chat.ID, "Ошибка создания товара: "+err.Error())
+					msg = tgbotapi.NewMessage(update.Message.Chat.ID, fmt.Sprintf("Ошибка создания товара: %v", err))
+					bot.Send(msg)
+					return
 				} else {
 					msg = tgbotapi.NewMessage(update.Message.Chat.ID,
 						fmt.Sprintf("Создан товар\nID: %d\nНазвание: %s\nОписание: %s\nЦена: %.2f\nКоличество: %d\nКатегория ID: %d\nВес: %v\nВкус: %s\nБренд: %s\nПорций: %d\nАктивен: %v",
 							product.ID, product.Name, product.Description, product.Price, product.Quantity,
 							product.Category_id, product.Weight, product.Flavor, product.Brand, product.Servings,
 							product.IsActive))
+					bot.Send(msg)
 				}
-			case "products": //товары
-				action = "products"
+
+			},
+		},
+		"products": {
+			AuthRequired: false,
+			AdminOnly:    false,
+			Action:       "products",
+			Handler: func(bot *tgbotapi.BotAPI, update tgbotapi.Update,
+				user *models.User, userRepo *repo.UserRepo) {
 				products, err := productRepo.AllProducts()
 				if err != nil {
 					msg = tgbotapi.NewMessage(update.Message.Chat.ID, "Ошибка загрузки товаров")
+					bot.Send(msg)
+					return
 				} else {
 					response := "All products \n\n"
 					for _, product := range products {
 						response += formatProduct(product) + "\n"
 					}
 					msg = tgbotapi.NewMessage(update.Message.Chat.ID, response)
+					bot.Send(msg)
 				}
-			case "search_product": //поиск товара
-				action = "search_product"
+
+			},
+		},
+		"search_product": {
+			AuthRequired: false,
+			AdminOnly:    false,
+			Action:       "search_product",
+			Handler: func(bot *tgbotapi.BotAPI, update tgbotapi.Update,
+				user *models.User, userRepo *repo.UserRepo) {
 				searchQuery := update.Message.CommandArguments()
 
 				if searchQuery == "" {
 					msg = tgbotapi.NewMessage(update.Message.Chat.ID, "Укажите название товара для поиска")
 					waitingProduct[update.Message.Chat.ID] = true // поднимаем флаг если не будет поиска 1м сообщением
+					bot.Send(msg)
 				} else {
 					products, err := productRepo.SearchProduct(searchQuery)
 					if err != nil {
 						msg = tgbotapi.NewMessage(update.Message.Chat.ID, "Ошибка поиска")
+						bot.Send(msg)
+						return
 					} else if len(products) == 0 {
 						msg = tgbotapi.NewMessage(update.Message.Chat.ID, "По запросу: "+searchQuery+" товаров не найдено")
+						bot.Send(msg)
+						return
 					} else {
 						response := "Результаты поиска по запросу: " + searchQuery + "\n\n"
 						for _, product := range products {
 							response += formatProduct(product) + "\n"
 						}
 						msg = tgbotapi.NewMessage(update.Message.Chat.ID, response)
+						bot.Send(msg)
 					}
+
 				}
-			case "update_product": //обновление товара
-				action = "update_product"
+			},
+		},
+		"update_product": {
+			AuthRequired: true,
+			AdminOnly:    true,
+			Action:       "update_product",
+			Handler: func(bot *tgbotapi.BotAPI, update tgbotapi.Update,
+				user *models.User, userRepo *repo.UserRepo) {
 				data := strings.Split(update.Message.CommandArguments(), "|")
 
 				if len(data) < 11 {
 					msg = tgbotapi.NewMessage(update.Message.Chat.ID,
 						"Некорректный формат. Используйте\n /update_product id|price|quantity|weight|category_id|servings|is_active|name|description|flavor|brand\nНеизменённые поля заполнять символом *")
-					break
+					bot.Send(msg)
+					return
 				}
 
 				products, err := productRepo.SearchProduct(data[0])
 				if err != nil || len(products) == 0 {
 					msg = tgbotapi.NewMessage(update.Message.Chat.ID, "Товар не найден")
-					break
+					bot.Send(msg)
+					return
 				}
 				product := &products[0] //инициализация товара который будет изменться
 
@@ -996,67 +546,71 @@ func HandleUpdates(bot *tgbotapi.BotAPI, productRepo *repo.ProductRepo, category
 
 				err = productRepo.UpdateProduct(product) //внесённые изменения вносятся в товар
 				if err != nil {
-					msg = tgbotapi.NewMessage(update.Message.Chat.ID, "Ошибка изменения товара: "+err.Error())
-					break
+					msg = tgbotapi.NewMessage(update.Message.Chat.ID, fmt.Sprintf("Ошибка изменения товара: %v", err))
+					bot.Send(msg)
+					return
 				} else {
 					msg = tgbotapi.NewMessage(update.Message.Chat.ID,
 						fmt.Sprintf("Изменен товар\nID: %d\nНазвание: %s\nОписание: %s\nЦена: %.2f\nКоличество: %d\nКатегория ID: %d\nВес: %v\nВкус: %s\nБренд: %s\nПорций: %d\nАктивен: %v",
 							product.ID, product.Name, product.Description, product.Price, product.Quantity,
 							product.Category_id, product.Weight, product.Flavor, product.Brand, product.Servings,
 							product.IsActive))
+					bot.Send(msg)
 				}
-			case "delete_product": //удаление товара
-				action = "delete_product"
+
+			},
+		},
+		"delete_product": {
+			AuthRequired: true,
+			AdminOnly:    true,
+			Action:       "delete_product",
+			Handler: func(bot *tgbotapi.BotAPI, update tgbotapi.Update,
+				user *models.User, userRepo *repo.UserRepo) {
 				data := strings.Fields(update.Message.CommandArguments())
 				if len(data) == 0 {
 					msg = tgbotapi.NewMessage(update.Message.Chat.ID, "Отправьте команду в формате /delete_product product_id")
-					break
+					bot.Send(msg)
+					return
 				}
 				productID, err := strconv.Atoi(data[0])
 				if err != nil {
 					msg = tgbotapi.NewMessage(update.Message.Chat.ID, "ID должно быть числом")
+					bot.Send(msg)
+					return
 				}
 				product, err := productRepo.SearchProduct(fmt.Sprintf("%d", productID))
-				if err != nil {
+				if err != nil || len(product) == 0 {
 					msg = tgbotapi.NewMessage(update.Message.Chat.ID, "Товар не найден")
-					break
+					bot.Send(msg)
+					return
 				}
 
 				waitingConfirm[update.Message.Chat.ID] = func() error { return productRepo.DeleteProduct(productID) }
 				msg = tgbotapi.NewMessage(update.Message.Chat.ID, fmt.Sprintf(
 					"Напишите + если хотите удалить товар: %s, ID = %d", product[0].Name, productID))
-			case "delete_order": //удаление заказа
-				action = "delete_order"
-				data := strings.Fields(update.Message.CommandArguments())
-				if len(data) == 0 {
-					msg = tgbotapi.NewMessage(update.Message.Chat.ID, "Отправьте команду в формате /delete_order order_id")
-					break
-				}
-				orderID, err := strconv.Atoi(data[0])
-				if err != nil {
-					msg = tgbotapi.NewMessage(update.Message.Chat.ID, "ID должно быть числом")
-				}
-				order, err := orderRepo.SearchOrder(orderID)
-				if err != nil {
-					msg = tgbotapi.NewMessage(update.Message.Chat.ID, "Заказ не найден")
-					break
-				}
-				waitingConfirm[update.Message.Chat.ID] = func() error { return orderRepo.DeleteOrder(orderID) }
-				msg = tgbotapi.NewMessage(update.Message.Chat.ID, fmt.Sprintf(
-					"Напишите + если хотите удалить Заказ: ID=%d, ID владельца: %d,", orderID, order.UserID))
-			case "create_category": //создание категории
-				action = "create_category"
+				bot.Send(msg)
+			},
+		},
+
+		"create_category": {
+			AuthRequired: true,
+			AdminOnly:    true,
+			Action:       "create_category",
+			Handler: func(bot *tgbotapi.BotAPI, update tgbotapi.Update,
+				user *models.User, userRepo *repo.UserRepo) {
 				data := strings.Split(update.Message.CommandArguments(), "|")
 
 				if len(data) < 3 {
 					msg = tgbotapi.NewMessage(update.Message.Chat.ID,
 						"Некорректный формат. Используйте\n /create_category name|description|is_active\n")
-					break
+					bot.Send(msg)
+					return
 				}
 				is_active, err := strconv.ParseBool(data[2])
 				if err != nil {
-					msg = tgbotapi.NewMessage(update.Message.Chat.ID, "is_active должно быть true/false: "+err.Error())
-					break
+					msg = tgbotapi.NewMessage(update.Message.Chat.ID, fmt.Sprintf("is_active должно быть true/false: %v", err))
+					bot.Send(msg)
+					return
 				}
 				category := &models.Category{ //всего 3 поля которые можно изменять. id,created_at автоматические
 					Name:        data[0],
@@ -1065,17 +619,29 @@ func HandleUpdates(bot *tgbotapi.BotAPI, productRepo *repo.ProductRepo, category
 				}
 				err = categoryRepo.CreateCategory(category)
 				if err != nil {
-					msg = tgbotapi.NewMessage(update.Message.Chat.ID, "Ошибка создания категории: "+err.Error())
+					msg = tgbotapi.NewMessage(update.Message.Chat.ID, fmt.Sprintf("Ошибка создания категории: %v", err))
+					bot.Send(msg)
+					return
 				} else {
 					msg = tgbotapi.NewMessage(update.Message.Chat.ID,
 						fmt.Sprintf("Создана категория %s\nID: %d\nОписание: %s",
 							category.Name, category.ID, category.Description))
+					bot.Send(msg)
 				}
-			case "categories": //категории
-				action = "categories"
+
+			},
+		},
+		"categories": {
+			AuthRequired: false,
+			AdminOnly:    false,
+			Action:       "categories",
+			Handler: func(bot *tgbotapi.BotAPI, update tgbotapi.Update,
+				user *models.User, userRepo *repo.UserRepo) {
 				categories, err := categoryRepo.AllCategories()
 				if err != nil {
 					msg = tgbotapi.NewMessage(update.Message.Chat.ID, "Ошибка загрузки категорий")
+					bot.Send(msg)
+					return
 				} else {
 					response := "Все категории:\n\n"
 					for _, categories := range categories {
@@ -1083,9 +649,17 @@ func HandleUpdates(bot *tgbotapi.BotAPI, productRepo *repo.ProductRepo, category
 					}
 					response = response + "\n\n"
 					msg = tgbotapi.NewMessage(update.Message.Chat.ID, response)
+					bot.Send(msg)
 				}
-				/*case "search_category": //поиск товаров по категории
-				action = "search_by_category"
+
+			},
+		},
+		"search_by_category": {
+			AuthRequired: false,
+			AdminOnly:    false,
+			Action:       "search_by_category",
+			Handler: func(bot *tgbotapi.BotAPI, update tgbotapi.Update,
+				user *models.User, userRepo *repo.UserRepo) {
 				category := update.Message.CommandArguments()
 
 				if category == "" {
@@ -1105,9 +679,16 @@ func HandleUpdates(bot *tgbotapi.BotAPI, productRepo *repo.ProductRepo, category
 						}
 						msg = tgbotapi.NewMessage(update.Message.Chat.ID, response)
 					}
-				}*/
-			case "search_category": //поиск категорий
-				action = "search_category"
+					bot.Send(msg)
+				}
+			},
+		},
+		"search_category": {
+			AuthRequired: false,
+			AdminOnly:    false,
+			Action:       "search_category",
+			Handler: func(bot *tgbotapi.BotAPI, update tgbotapi.Update,
+				user *models.User, userRepo *repo.UserRepo) {
 				searchQuery := update.Message.CommandArguments()
 
 				if searchQuery == "" {
@@ -1117,30 +698,43 @@ func HandleUpdates(bot *tgbotapi.BotAPI, productRepo *repo.ProductRepo, category
 					categories, err := categoryRepo.SearchCategory(searchQuery)
 					if err != nil {
 						msg = tgbotapi.NewMessage(update.Message.Chat.ID, "Ошибка поиска")
+						bot.Send(msg)
+						return
 					} else if len(categories) == 0 {
 						msg = tgbotapi.NewMessage(update.Message.Chat.ID, "По запросу: "+searchQuery+" категорий не найдено")
+						bot.Send(msg)
+						return
 					} else {
 						response := "Результаты поиска по запросу: " + searchQuery + "\n\n"
 						for _, category := range categories {
 							response += formatCategory(category) + "\n"
 						}
 						msg = tgbotapi.NewMessage(update.Message.Chat.ID, response)
+						bot.Send(msg)
 					}
 				}
-			case "update_category": //обновление категории
-				action = "update_category"
+			},
+		},
+		"update_category": {
+			AuthRequired: true,
+			AdminOnly:    true,
+			Action:       "update_category",
+			Handler: func(bot *tgbotapi.BotAPI, update tgbotapi.Update,
+				user *models.User, userRepo *repo.UserRepo) {
 				data := strings.Split(update.Message.CommandArguments(), "|")
 
 				if len(data) < 4 {
 					msg = tgbotapi.NewMessage(update.Message.Chat.ID,
 						"Некорректный формат. Используйте\n /update_category id|name|description|is_active\nНеизменённые поля заполнять символом *")
-					break
+					bot.Send(msg)
+					return
 				}
 
 				categories, err := categoryRepo.SearchCategory(data[0])
 				if err != nil || len(categories) == 0 {
 					msg = tgbotapi.NewMessage(update.Message.Chat.ID, "Категория не найдена")
-					break
+					bot.Send(msg)
+					return
 				}
 				category := &categories[0] //категория для изменения
 
@@ -1157,37 +751,225 @@ func HandleUpdates(bot *tgbotapi.BotAPI, productRepo *repo.ProductRepo, category
 
 				err = categoryRepo.UpdateCategory(category)
 				if err != nil {
-					msg = tgbotapi.NewMessage(update.Message.Chat.ID, "Ошибка изменения категории: "+err.Error())
-					break
+					msg = tgbotapi.NewMessage(update.Message.Chat.ID, fmt.Sprintf("Ошибка изменения категории: %v", err))
+					bot.Send(msg)
+					return
 				} else {
 					msg = tgbotapi.NewMessage(update.Message.Chat.ID,
 						fmt.Sprintf("Изменена категория\nID: %d\nИмя: %s\nОписание: %s\nАктивна: %v",
 							category.ID, category.Name, category.Description, category.IsActive))
+					bot.Send(msg)
 				}
-
-			case "delete_category": //удаление категории
-				action = "delete_category"
+			},
+		},
+		"delete_category": {
+			AuthRequired: true,
+			AdminOnly:    true,
+			Action:       "delete_category",
+			Handler: func(bot *tgbotapi.BotAPI, update tgbotapi.Update,
+				user *models.User, userRepo *repo.UserRepo) {
 				data := strings.Fields(update.Message.CommandArguments())
 				if len(data) == 0 {
 					msg = tgbotapi.NewMessage(update.Message.Chat.ID, "Отправьте команду в формате /delete_category category_id")
-					break
+					return
 				}
 				categoryID, err := strconv.Atoi(data[0])
 				if err != nil {
 					msg = tgbotapi.NewMessage(update.Message.Chat.ID, "ID должно быть числом")
-					break
+					return
 				}
 				categories, err := categoryRepo.SearchCategory(fmt.Sprintf("%d", categoryID))
 				if err != nil || len(categories) == 0 {
 					msg = tgbotapi.NewMessage(update.Message.Chat.ID, "Категория не найдена")
-					break
+					return
 				}
 				waitingConfirm[update.Message.Chat.ID] = func() error { return categoryRepo.DeleteCategory(categoryID) }
 				msg = tgbotapi.NewMessage(update.Message.Chat.ID, fmt.Sprintf(
 					"Напишите + если хотите удалить категорию: %s, %s, ID = %d", categories[0].Name, categories[0].Description, categoryID))
-			case "start": //старт команда
+				bot.Send(msg)
+			},
+		},
+		"create_user": {
+			AuthRequired: true,
+			AdminOnly:    true,
+			Action:       "create_user",
+			Handler: func(bot *tgbotapi.BotAPI, update tgbotapi.Update,
+				user *models.User, userRepo *repo.UserRepo) {
+				var password string
+				data := strings.Split(update.Message.CommandArguments(), "|")
 
-				action = "command_start"
+				if len(data) < 6 {
+					msg = tgbotapi.NewMessage(update.Message.Chat.ID,
+						"Некорректный формат. Используйте\n /create_user telegram_id|telegram_username|first_name|phone|email|role|password\n")
+					bot.Send(msg)
+					return
+				}
+				TelegramID, err := strconv.ParseInt(data[0], 10, 64)
+				if err != nil {
+					msg = tgbotapi.NewMessage(update.Message.Chat.ID, "Ошибка: telegram_id должен быть числом")
+					bot.Send(msg)
+					return
+				}
+
+				NewUser := &models.User{
+					TelegramID: TelegramID,
+					Username:   data[1],
+					FirstName:  data[2],
+					Phone:      data[3],
+					Email:      data[4],
+					Role:       data[5],
+				}
+				if len(data) > 6 {
+					password = data[6]
+				}
+
+				err = userRepo.CreateUser(NewUser, password)
+				if err != nil {
+					msg = tgbotapi.NewMessage(update.Message.Chat.ID, fmt.Sprintf("Ошибка создания пользователя: %v", err))
+				} else {
+					msg = tgbotapi.NewMessage(update.Message.Chat.ID,
+						fmt.Sprintf("Создан пользователь\nID: %d\nTelegramID: %d\nНик: %s\nИмя: %s\nТелефон: %v\nПочта: %s\nРоль: %s\nПароль: %s",
+							NewUser.ID, NewUser.TelegramID, NewUser.Username, NewUser.FirstName,
+							NewUser.Phone, NewUser.Email, NewUser.Role, password))
+					bot.Send(msg)
+				}
+			},
+		},
+		"users": {
+			AuthRequired: true,
+			AdminOnly:    true,
+			Action:       "users",
+			Handler: func(bot *tgbotapi.BotAPI, update tgbotapi.Update,
+				user *models.User, userRepo *repo.UserRepo) {
+				users, err := userRepo.AllUsers()
+				if err != nil {
+					msg = tgbotapi.NewMessage(update.Message.Chat.ID, "Ошибка загрузки юзеров")
+					bot.Send(msg)
+					return
+				} else {
+					response := "Все юзеры\n\n"
+					for _, user := range users {
+						response += formatUser(user) + "\n"
+					}
+					msg = tgbotapi.NewMessage(update.Message.Chat.ID, response)
+					bot.Send(msg)
+				}
+			},
+		},
+		"search_user": {
+			AuthRequired: true,
+			AdminOnly:    true,
+			Action:       "search_user",
+			Handler: func(bot *tgbotapi.BotAPI, update tgbotapi.Update,
+				user *models.User, userRepo *repo.UserRepo) {
+				searchQuery := update.Message.CommandArguments()
+				if searchQuery == "" {
+					msg = tgbotapi.NewMessage(update.Message.Chat.ID, "Укажите имя пользователя для поиска")
+					waitingUser[update.Message.Chat.ID] = true // поднимаем флаг если не будет поиска 1м сообщением
+				} else {
+					users, err := userRepo.SearchUser(searchQuery)
+					if err != nil {
+						msg = tgbotapi.NewMessage(update.Message.Chat.ID, "Ошибка поиска")
+						bot.Send(msg)
+						return
+					} else if len(users) == 0 {
+						msg = tgbotapi.NewMessage(update.Message.Chat.ID, "По запросу: "+searchQuery+" пользователей не найдено")
+						bot.Send(msg)
+						return
+					} else {
+						response := "Результаты поиска по запросу: " + searchQuery + "\n\n"
+						for _, user := range users {
+							response += formatUser(user) + "\n"
+						}
+						msg = tgbotapi.NewMessage(update.Message.Chat.ID, response)
+						bot.Send(msg)
+					}
+				}
+			},
+		},
+		"update_user": {
+			AuthRequired: true,
+			AdminOnly:    true,
+			Action:       "update_user",
+			Handler: func(bot *tgbotapi.BotAPI, update tgbotapi.Update,
+				user *models.User, userRepo *repo.UserRepo) {
+				data := strings.Split(update.Message.CommandArguments(), "|")
+
+				if len(data) < 7 {
+					msg = tgbotapi.NewMessage(update.Message.Chat.ID,
+						"Некорректный формат. Используйте\n /update_user id|telegram_id|telegram_username|first_name|phone|email|role\nНеизменённые поля заполнять символом *")
+					return
+				}
+
+				users, err := userRepo.SearchUser(data[0])
+				if err != nil || len(users) == 0 {
+					msg = tgbotapi.NewMessage(update.Message.Chat.ID, "Пользователь не найден")
+					return
+				}
+				OldUser := &users[0]
+
+				NewUser := []*string{&OldUser.Username, &OldUser.FirstName, &OldUser.Phone, &OldUser.Email, &OldUser.Role} //строковые поля обрабатываются
+
+				for i := 2; i < len(data) && i-2 < len(NewUser); i++ {
+					if data[i] != "*" {
+						*NewUser[i-2] = data[i]
+					}
+				}
+
+				if data[1] != "*" { //обработка числового значения TG_ID
+					TelegramID, _ := strconv.ParseInt(data[1], 10, 64)
+					OldUser.TelegramID = TelegramID
+				}
+
+				err = userRepo.UpdateUser(OldUser)
+				if err != nil {
+					msg = tgbotapi.NewMessage(update.Message.Chat.ID, "Ошибка изменения пользователя: "+err.Error())
+					return
+				} else {
+					msg = tgbotapi.NewMessage(update.Message.Chat.ID,
+						fmt.Sprintf("Изменен пользователь\nID: %d\nTelegramID: %d\nНик: %s\nИмя: %s\nТелефон: %v\nПочта: %s\nРоль: %s",
+							OldUser.ID, OldUser.TelegramID, OldUser.Username, OldUser.FirstName,
+							OldUser.Phone, OldUser.Email, OldUser.Role))
+					bot.Send(msg)
+				}
+			},
+		},
+		"delete_user": {
+			AuthRequired: true,
+			AdminOnly:    true,
+			Action:       "delete_user",
+			Handler: func(bot *tgbotapi.BotAPI, update tgbotapi.Update,
+				user *models.User, userRepo *repo.UserRepo) {
+				data := strings.Fields(update.Message.CommandArguments())
+				if len(data) == 0 {
+					msg = tgbotapi.NewMessage(update.Message.Chat.ID, "Отправьте команду в формате /delete_user user_id")
+					bot.Send(msg)
+					return
+				}
+				userID, err := strconv.Atoi(data[0])
+				if err != nil {
+					msg = tgbotapi.NewMessage(update.Message.Chat.ID, "ID должно быть числом")
+					bot.Send(msg)
+					return
+				}
+				users, err := userRepo.SearchUser(fmt.Sprintf("%d", userID))
+				if err != nil || len(users) == 0 {
+					msg = tgbotapi.NewMessage(update.Message.Chat.ID, "Пользователь не найден")
+					bot.Send(msg)
+					return
+				}
+				waitingConfirm[update.Message.Chat.ID] = func() error { return userRepo.DeleteUser(userID) }
+				msg = tgbotapi.NewMessage(update.Message.Chat.ID, fmt.Sprintf(
+					"Напишите + если хотите удалить пользователя: %s, %s, ID = %d", users[0].FirstName, users[0].Username, userID))
+				bot.Send(msg)
+			},
+		},
+		"start": {
+			AuthRequired: false,
+			AdminOnly:    false,
+			Action:       "start",
+			Handler: func(bot *tgbotapi.BotAPI, update tgbotapi.Update,
+				user *models.User, userRepo *repo.UserRepo) {
 
 				delete(SelectProduct, update.Message.Chat.ID)
 				delete(SelectCategory, update.Message.Chat.ID)
@@ -1224,26 +1006,553 @@ func HandleUpdates(bot *tgbotapi.BotAPI, productRepo *repo.ProductRepo, category
 					),
 				)
 				msg.ReplyMarkup = keyboard
-
-			case "help":
-				action = "command help"
+				bot.Send(msg)
+			},
+		},
+		"help": {
+			AuthRequired: false,
+			AdminOnly:    false,
+			Action:       "help",
+			Handler: func(bot *tgbotapi.BotAPI, update tgbotapi.Update,
+				user *models.User, userRepo *repo.UserRepo) {
 				msg = tgbotapi.NewMessage(update.Message.Chat.ID,
 					"/start - начало\n/products - все товары\n/categories - все категории\n/search [product/user] [текст] - поиск товаров/пользователей\n/help - помощь\n/users - список пользователей")
+				bot.Send(msg)
+			},
+		},
+		"cart": {
+			AuthRequired: true,
+			AdminOnly:    false,
+			Action:       "cart",
+			Handler: func(bot *tgbotapi.BotAPI, update tgbotapi.Update,
+				user *models.User, userRepo *repo.UserRepo) {
+				cart, err := orderRepo.DetailCart(int64(user.ID))
+				if err != nil {
+					msg := tgbotapi.NewMessage(update.Message.Chat.ID, "Ошибка загрузки корзины!")
+					bot.Send(msg)
+					return
+				}
+				if cart == nil {
+					msg := tgbotapi.NewMessage(update.Message.Chat.ID, "Нет заказов!")
+					bot.Send(msg)
+					return
+				}
+				response := "Ваша корзина:\n\n"
+				response = formatCart(&cart.Order, cart.Items, productRepo)
+				msg := tgbotapi.NewMessage(update.Message.Chat.ID, response)
+				bot.Send(msg)
+			},
+		},
+		"register": {
+			AuthRequired: false,
+			AdminOnly:    false,
+			Action:       "register",
+			Handler: func(bot *tgbotapi.BotAPI, update tgbotapi.Update,
+				user *models.User, userRepo *repo.UserRepo) {
+				args := update.Message.CommandArguments()
 
-			default: //если никакой кейс не сработает
-				action = update.Message.Text
-				msg = tgbotapi.NewMessage(update.Message.Chat.ID, "Недоступная команда. повторите попытку")
+				if args == "" {
+					msg = tgbotapi.NewMessage(update.Message.Chat.ID,
+						"Используйте команду: /register password|UserID для регистрации")
+					return
+				}
+				data := strings.Split(args, "|")
+				var password string
+				var TelegramID int64
+				var err error
+				if len(data) == 1 { //введён только пароль
+					password = data[0]
+					TelegramID = update.Message.From.ID
+				} else if len(data) == 2 { //введён и пароль и юзер
+					password = data[0]
+					TelegramID, err = strconv.ParseInt(data[1], 10, 64)
+					if err != nil {
+						msg = tgbotapi.NewMessage(update.Message.Chat.ID,
+							"Ошибка: Telegram ID должен быть числом")
+						return
+					}
+				} else { //обработка некорректной команды
+					msg = tgbotapi.NewMessage(update.Message.Chat.ID,
+						"Некорректный формат. Используйте: /register password|TelegramID")
+					return
+				}
+				users, err := userRepo.SearchUserTGID(TelegramID)
+
+				if err != nil && !strings.Contains(err.Error(), "user not found") { //ошибка отсутствия юзера
+					msg = tgbotapi.NewMessage(update.Message.Chat.ID,
+						fmt.Sprintf("Ошибка поиска пользователя: %v", err))
+					return
+				}
+
+				if users != nil { //обработка существующего пользователя
+					if users.Password != "" { //вход по паролю
+						msg = tgbotapi.NewMessage(update.Message.Chat.ID,
+							"Пользователь уже зарегистрирован. Войдите: /login password|TelegramID")
+						msgToUser := tgbotapi.NewMessage(TelegramID,
+							fmt.Sprintf("Напоминание пароля для аккаунта ID=%d", users.ID))
+						bot.Send(msgToUser)
+					} else { //обновление пароля
+						err = userRepo.UpdatePassword(int(users.ID), password)
+						if err != nil {
+							msg = tgbotapi.NewMessage(update.Message.Chat.ID,
+								fmt.Sprintf("Ошибка установки пароля: %v", err))
+							return
+						}
+						token, err := GenerateToken(users)
+						if err != nil {
+							msg = tgbotapi.NewMessage(update.Message.Chat.ID,
+								fmt.Sprintf("Ошибка генерации токена: %v", err))
+							return
+						}
+						userTokens[update.Message.Chat.ID] = token
+						msg = tgbotapi.NewMessage(update.Message.Chat.ID,
+							fmt.Sprintf("Пароль установлен для пользователя %s. Сессия активна 10 минут.",
+								users.FirstName))
+
+					}
+				} else { //создание нового пользователя
+					username := update.Message.From.UserName
+					if username == "" {
+						username = strconv.FormatInt(TelegramID, 10)
+					}
+
+					NewUser := &models.User{
+						TelegramID: TelegramID,
+						Username:   username,
+						FirstName:  update.Message.From.FirstName,
+						Phone:      "",
+						Email:      "",
+						Role:       "user",
+					}
+					err = userRepo.CreateUser(NewUser, password)
+					if err != nil {
+						msg = tgbotapi.NewMessage(update.Message.Chat.ID,
+							fmt.Sprintf("Ошибка создания пользователя: %v", err))
+						bot.Send(msg)
+						return
+					}
+					token, err := GenerateToken(NewUser)
+					if err != nil {
+						msg = tgbotapi.NewMessage(update.Message.Chat.ID,
+							fmt.Sprintf("Ошибка генерации токена: %v", err))
+						bot.Send(msg)
+						return
+					}
+
+					userTokens[update.Message.Chat.ID] = token
+					msgToUser := tgbotapi.NewMessage(TelegramID,
+						fmt.Sprintf("Ваш пароль для аккаунта ID=%d установлен", NewUser.ID))
+					bot.Send(msgToUser)
+
+					msg = tgbotapi.NewMessage(update.Message.Chat.ID,
+						fmt.Sprintf("Пользователь %s успешно зарегистрирован. Сессия активна 10 минут.",
+							NewUser.FirstName))
+				}
+			},
+		},
+		"login": {
+			AuthRequired: false,
+			AdminOnly:    false,
+			Action:       "login",
+			Handler: func(bot *tgbotapi.BotAPI, update tgbotapi.Update,
+				user *models.User, userRepo *repo.UserRepo) {
+
+				args := update.Message.CommandArguments()
+				if args == "" {
+					msg = tgbotapi.NewMessage(update.Message.Chat.ID,
+						"Используйте команду:\n/login password|TelegramID")
+					bot.Send(msg)
+					return
+				}
+				data := strings.Split(args, "|")
+				var password string
+				var TelegramID int64
+				var err error
+				if len(data) == 1 { // вход в текущий аккаунт
+					password = data[0]
+					TelegramID = update.Message.From.ID
+				} else if len(data) == 2 { // вход в указанный аккаунт
+					password = data[0]
+					TelegramID, err = strconv.ParseInt(data[1], 10, 64)
+					if err != nil {
+						msg = tgbotapi.NewMessage(update.Message.Chat.ID,
+							"Ошибка: Telegram ID должен быть числом")
+						bot.Send(msg)
+
+						return
+					}
+				} else {
+					msg = tgbotapi.NewMessage(update.Message.Chat.ID,
+						"Некорректный формат. Используйте: /login password|TelegramID")
+					bot.Send(msg)
+					return
+				}
+				users, err := userRepo.SearchUserTGID(TelegramID)
+				if err != nil {
+					if strings.Contains(err.Error(), "user not found") {
+						msg = tgbotapi.NewMessage(update.Message.Chat.ID,
+							"Пользователь не найден. Пройдите регистрацию: /register password|TelegramID")
+						bot.Send(msg)
+						return
+					} else {
+						msg = tgbotapi.NewMessage(update.Message.Chat.ID,
+							fmt.Sprintf("Ошибка поиска пользователя: %v", err))
+						bot.Send(msg)
+						return
+					}
+				}
+				if users.Password == "" {
+					msg = tgbotapi.NewMessage(update.Message.Chat.ID, "Отсутствует пароль. Введите\n/register password|TelegramID для установки пароля")
+					bot.Send(msg)
+					return
+				}
+				if !utils.CheckPasswordHash(password, users.Password) {
+					msg = tgbotapi.NewMessage(update.Message.Chat.ID, "Неверный пароль!")
+					bot.Send(msg)
+					return
+				}
+				token, err := GenerateToken(users)
+				if err != nil {
+					msg = tgbotapi.NewMessage(update.Message.Chat.ID,
+						fmt.Sprintf("Ошибка генерации токена: %v", err))
+					bot.Send(msg)
+					return
+				}
+				userTokens[update.Message.Chat.ID] = token
+				msg = tgbotapi.NewMessage(update.Message.Chat.ID,
+					fmt.Sprintf("Здравствуйте, %s!\nВаш статус: %s\nID: %d\nСессия активна 10 минут",
+						users.FirstName, users.Role, users.ID))
+				bot.Send(msg)
+			},
+		},
+		"token": {
+			AuthRequired: true,
+			AdminOnly:    false,
+			Action:       "token",
+			Handler: func(bot *tgbotapi.BotAPI, update tgbotapi.Update,
+				user *models.User, userRepo *repo.UserRepo) {
+				NewToken, err := GenerateToken(user)
+				if err != nil {
+					msg = tgbotapi.NewMessage(update.Message.Chat.ID,
+						fmt.Sprintf("Ошибка генерации токена: %v", err))
+					bot.Send(msg)
+					return
+				}
+
+				userTokens[update.Message.Chat.ID] = NewToken
+				msg = tgbotapi.NewMessage(update.Message.Chat.ID,
+					fmt.Sprintf("Ваш новый токен: %s\nДействует 10 минут", NewToken))
+				bot.Send(msg)
+				msg.ParseMode = "Markdown"
+			},
+		},
+		"logout": {
+			AuthRequired: false,
+			AdminOnly:    false,
+			Action:       "logout",
+			Handler: func(bot *tgbotapi.BotAPI, update tgbotapi.Update,
+				user *models.User, userRepo *repo.UserRepo) {
+
+				delete(userTokens, update.Message.Chat.ID)
+				delete(SelectProduct, update.Message.Chat.ID)
+				delete(SelectCategory, update.Message.Chat.ID)
+				delete(buyingState, update.Message.Chat.ID)
+				delete(SelectQuantity, update.Message.Chat.ID)
+				delete(waitingProduct, update.Message.Chat.ID)
+				delete(waitingUser, update.Message.Chat.ID)
+				delete(waitingCategory, update.Message.Chat.ID)
+				delete(waitingConfirm, update.Message.Chat.ID)
+				delete(paginationState, update.Message.Chat.ID)
+				msg = tgbotapi.NewMessage(update.Message.Chat.ID, "Успешный выхох из программы. Вход: /login")
+				bot.Send(msg)
+			},
+		},
+		"create_order": {
+			AuthRequired: true,
+			AdminOnly:    false,
+			Action:       "create_order",
+			Handler: func(bot *tgbotapi.BotAPI, update tgbotapi.Update,
+				user *models.User, userRepo *repo.UserRepo) {
+				token, err := GenerateToken(user)
+				if err != nil {
+					msg = tgbotapi.NewMessage(update.Message.Chat.ID, fmt.Sprintf("Ошибка генерации токена: %v", err))
+					bot.Send(msg)
+
+					return
+				}
+				err = CheckPermissions(userRepo, token, 1)
+				if err != nil {
+					msg = tgbotapi.NewMessage(update.Message.Chat.ID, "Недостаточно прав доступа")
+					bot.Send(msg)
+					return
+				}
+				order, err := orderRepo.CreateOrder(user.ID)
+				if err != nil {
+					msg = tgbotapi.NewMessage(update.Message.Chat.ID, "Ошибка создания заказа")
+					bot.Send(msg)
+					return
+				} else {
+					response := fmt.Sprintf("Заказ создан\nНомер заказа: %d", order.ID)
+					msg = tgbotapi.NewMessage(update.Message.Chat.ID, response)
+					bot.Send(msg)
+				}
+
+			},
+		},
+		"orders": {
+			AuthRequired: true,
+			AdminOnly:    true,
+			Action:       "orders",
+			Handler: func(bot *tgbotapi.BotAPI, update tgbotapi.Update,
+				user *models.User, userRepo *repo.UserRepo) {
+
+				ShowPagination(bot, update.Message.Chat.ID, 0, 1,
+					orderRepo.CountOrders,
+					func(limit, offset int) ([]interface{}, error) {
+						orders, err := orderRepo.PaginateOrders(limit, offset)
+						if err != nil {
+							return nil, err
+						}
+						return convertToInterfaceSlice(orders)
+					},
+					func(data interface{}) string {
+						return formatOrder(data.(models.Order), userRepo)
+					},
+					"заказы",
+					"orders",
+					false)
+
+			},
+		},
+		"delete_order": {
+			AuthRequired: true,
+			AdminOnly:    true,
+			Action:       "delete_order",
+			Handler: func(bot *tgbotapi.BotAPI, update tgbotapi.Update,
+				user *models.User, userRepo *repo.UserRepo) {
+				data := strings.Fields(update.Message.CommandArguments())
+				if len(data) == 0 {
+					msg = tgbotapi.NewMessage(update.Message.Chat.ID, "Отправьте команду в формате /delete_order order_id")
+					bot.Send(msg)
+					return
+				}
+				orderID, err := strconv.Atoi(data[0])
+				if err != nil {
+					msg = tgbotapi.NewMessage(update.Message.Chat.ID, "ID должно быть числом")
+					bot.Send(msg)
+					return
+				}
+				order, err := orderRepo.SearchOrder(orderID)
+				if err != nil {
+					msg = tgbotapi.NewMessage(update.Message.Chat.ID, "Ошибка поиска заказа: "+err.Error())
+					bot.Send(msg)
+					return
+				}
+				if order == nil {
+					msg = tgbotapi.NewMessage(update.Message.Chat.ID, "Заказ не найден")
+					bot.Send(msg)
+					return
+				}
+
+				waitingConfirm[update.Message.Chat.ID] = func() error {
+					return orderRepo.DeleteOrder(orderID)
+				}
+				msg = tgbotapi.NewMessage(update.Message.Chat.ID,
+					fmt.Sprintf("Напишите + если хотите удалить заказ с ID = %d\nПользователь: %d\nСумма: %.2f\nСтатус: %s",
+						order.ID, order.UserID, order.Amount, order.Status))
+				bot.Send(msg)
+			},
+		},
+	}
+
+	for update := range updates {
+		if update.CallbackQuery != nil {
+			handleCallback(bot, update.CallbackQuery, productRepo, categoryRepo, userRepo, orderRepo)
+
+		}
+		if update.Message == nil {
+			continue
+		}
+
+		if update.Message.IsCommand() {
+			command := update.Message.Command()
+
+			if handler, ok := commandHandlers[command]; ok {
+				var user *models.User
+				var err error
+				action := commandHandlers[command].Action
+				log.Printf("user_id: %d, username: %s, action: %s", update.Message.From.ID, update.Message.From.FirstName, action)
+
+				if handler.AuthRequired {
+					token := GetTokenFromUpdate(update)
+					if token == "" {
+						msg := tgbotapi.NewMessage(update.Message.Chat.ID, "Сначала выполните /login")
+						bot.Send(msg)
+						continue
+					}
+
+					user, err = AuthenticateUser(token, userRepo)
+					if err != nil {
+						msg := tgbotapi.NewMessage(update.Message.Chat.ID, "Токен недействителен. Выполните /login")
+						bot.Send(msg)
+						continue
+					}
+					if handler.AdminOnly && user.Role != "admin" {
+						msg := tgbotapi.NewMessage(update.Message.Chat.ID, "Доступ только для администраторов")
+						bot.Send(msg)
+						continue
+					}
+				}
+
+				handler.Handler(bot, update, user, userRepo)
+				continue
+			}
+			action := update.Message.Text
+			log.Printf("user_id: %d, username: %s, action: %s", update.Message.From.ID, update.Message.From.FirstName, action)
+			msg := tgbotapi.NewMessage(update.Message.Chat.ID, "Неизвестная команда")
+			bot.Send(msg)
+			continue
+		}
+
+		if update.Message == nil {
+			continue
+		}
+
+		userID := update.Message.From.ID
+		userName := update.Message.From.FirstName
+		if update.Message.From.UserName != "" {
+			userName = update.Message.From.UserName
+		}
+		var msg tgbotapi.MessageConfig
+		var action string
+
+		if waitingProduct[update.Message.Chat.ID] && !update.Message.IsCommand() { //проверка на ожидание для возможности поиска товара 2м сообщением
+			searchQuery := update.Message.Text
+			action = "search product 2nd msg"
+
+			products, err := productRepo.SearchProduct(searchQuery)
+			if err != nil {
+				log.Printf("Ошибка: %v", err)
+				msg = tgbotapi.NewMessage(update.Message.Chat.ID, "Ошибка поиска")
+				bot.Send(msg)
+				return
+			} else if len(products) == 0 {
+				msg = tgbotapi.NewMessage(update.Message.Chat.ID, "По запросу: "+searchQuery+" товаров не найдено")
+				bot.Send(msg)
+				return
+			} else {
+				response := "Результаты поиска по запросу: " + searchQuery + "\n\n"
+				for _, product := range products {
+					response += formatProduct(product) + "\n"
+				}
+				msg = tgbotapi.NewMessage(update.Message.Chat.ID, response)
+				bot.Send(msg)
+			}
+			waitingProduct[update.Message.Chat.ID] = false // сбрасываем ожидание
+		} else if waitingUser[update.Message.Chat.ID] && !update.Message.IsCommand() { //проверка на ожидание для возможности поиска юзера 2м сообщением
+			searchQuery := update.Message.Text
+			action = "search user 2nd msg"
+
+			users, err := userRepo.SearchUser(searchQuery)
+			if err != nil {
+				log.Printf("Ошибка: %v", err)
+				msg = tgbotapi.NewMessage(update.Message.Chat.ID, "Ошибка поиска")
+				bot.Send(msg)
+				return
+			} else if len(users) == 0 {
+				msg = tgbotapi.NewMessage(update.Message.Chat.ID, "По запросу: "+searchQuery+" пользователей не найдено")
+				bot.Send(msg)
+				return
+			} else {
+				response := "Результаты поиска по запросу: " + searchQuery + "\n\n"
+				for _, user := range users {
+					response += formatUser(user) + "\n"
+				}
+				msg = tgbotapi.NewMessage(update.Message.Chat.ID, response)
+				bot.Send(msg)
+			}
+			waitingUser[update.Message.Chat.ID] = false // сбрасываем ожидание
+		} else if waitingCategory[update.Message.Chat.ID] && !update.Message.IsCommand() { //проверка на ожидание для возможности поиска категории 2м сообщением
+			searchQuery := update.Message.Text
+			action = "search category 2nd msg"
+
+			categories, err := categoryRepo.SearchCategory(searchQuery)
+			if err != nil {
+				log.Printf("Ошибка: %v", err)
+				msg = tgbotapi.NewMessage(update.Message.Chat.ID, "Ошибка поиска")
+				bot.Send(msg)
+				return
+			} else if len(categories) == 0 {
+				msg = tgbotapi.NewMessage(update.Message.Chat.ID, "По запросу: "+searchQuery+" категорий  не найдено")
+				bot.Send(msg)
+				return
+			} else {
+				response := "Результаты поиска по запросу: " + searchQuery + "\n\n"
+				for _, categories := range categories {
+					response += formatCategory(categories) + "\n"
+				}
+				msg = tgbotapi.NewMessage(update.Message.Chat.ID, response)
+				bot.Send(msg)
+			}
+			waitingCategory[update.Message.Chat.ID] = false // сбрасываем ожидание
+		} else if deleteFunc := waitingConfirm[update.Message.Chat.ID]; deleteFunc != nil {
+			confirm := update.Message.Text
+			if confirm == "+" {
+				if err := deleteFunc(); err != nil {
+					msg = tgbotapi.NewMessage(update.Message.Chat.ID, fmt.Sprintf("Ошибка удаления: %v", err))
+					bot.Send(msg)
+					return
+				} else {
+					msg = tgbotapi.NewMessage(update.Message.Chat.ID, "Успешное удаление!")
+					bot.Send(msg)
+				}
+				waitingConfirm[update.Message.Chat.ID] = nil
+			} else {
+				msg = tgbotapi.NewMessage(update.Message.Chat.ID, "Отмена удаления")
+				waitingConfirm[update.Message.Chat.ID] = nil
+				bot.Send(msg)
+			}
+			continue
+		} else if update.Message.IsCommand() { //отбираем все после /
+			command := update.Message.Command()
+
+			if handler, ok := commandHandlers[command]; ok {
+				var user *models.User
+				var err error
+				if handler.AuthRequired {
+					token := GetTokenFromUpdate(update)
+					if token == "" {
+						msg := tgbotapi.NewMessage(update.Message.Chat.ID, "Сначала выполните /login")
+						bot.Send(msg)
+						continue
+					}
+
+					user, err = AuthenticateUser(token, userRepo)
+					if err != nil {
+						msg := tgbotapi.NewMessage(update.Message.Chat.ID, "Токен недействителен. Выполните /login")
+						bot.Send(msg)
+						continue
+					}
+					if handler.AdminOnly && user.Role != "admin" {
+						msg := tgbotapi.NewMessage(update.Message.Chat.ID, "Доступ только для администраторов")
+						bot.Send(msg)
+						continue
+					}
+				}
+				handler.Handler(bot, update, user, userRepo)
+				continue
+
 			}
 		} else {
 			action = update.Message.Text
 			msg = tgbotapi.NewMessage(update.Message.Chat.ID, "Недоступная команда. повторите попытку")
+			bot.Send(msg)
 		}
 		/*если непонятно что ввелось можно обработать как введённое сообщение
 		if action == "" {
 		action = update.Message.Chat.ID
 		}*/
 		log.Printf("user_id: %d, username: %s, action: %s ", userID, userName, action) //лог введённой команды
-		bot.Send(msg)
 	}
 }
 
@@ -1338,6 +1647,28 @@ func handleCallback(bot *tgbotapi.BotAPI, callback *tgbotapi.CallbackQuery, prod
 	ChatID := callback.Message.Chat.ID
 	MessageID := callback.Message.MessageID
 	data := callback.Data
+
+	if data == "users" || data == "cart" || data == "orders" || data == "buyproducts" || data == "create_order" ||
+		strings.HasPrefix(data, "buying_") ||
+		data == "confirm" || data == "cancell" {
+
+		token := GetTokenFromUpdate(tgbotapi.Update{CallbackQuery: callback})
+		if token == "" {
+			msg := tgbotapi.NewMessage(ChatID, "Авторизуйтесь через /login")
+			bot.Send(msg)
+			bot.Send(tgbotapi.NewCallback(callback.ID, ""))
+			return
+		}
+		if data == "users" || data == "search_user" {
+			user, err := AuthenticateUser(token, userRepo)
+			if err != nil || user.Role != "admin" {
+				msg := tgbotapi.NewMessage(ChatID, "Доступ только для администраторов")
+				bot.Send(msg)
+				bot.Send(tgbotapi.NewCallback(callback.ID, ""))
+				return
+			}
+		}
+	}
 	var msg tgbotapi.MessageConfig
 	var action string
 	if strings.HasPrefix(data, "category_") { //data - то какое значение под собой содержит та или иная кнопка
@@ -1743,27 +2074,6 @@ func handleCallback(bot *tgbotapi.BotAPI, callback *tgbotapi.CallbackQuery, prod
 			action = "callback_search_product"
 			msg1 := tgbotapi.NewMessage(ChatID, "Укажите название товара для поиска")
 			bot.Send(msg1)
-			waitingProduct[ChatID] = true
-			product := callback.Message.CommandArguments()
-
-			if product == "" {
-				msg = tgbotapi.NewMessage(ChatID, "Укажите название категории для поиска")
-				waitingProduct[callback.Message.Chat.ID] = true // поднимаем флаг если не будет поиска 1м сообщением
-			} else {
-				products, err := productRepo.SearchProduct(product)
-				if err != nil {
-					fmt.Printf("error: %v", err)
-					msg = tgbotapi.NewMessage(ChatID, "Ошибка поиска")
-				} else if len(products) == 0 {
-					msg = tgbotapi.NewMessage(ChatID, "По запросу: "+product+" товаров не найдено")
-				} else {
-					response := "Результаты поиска по запросу: " + product + "\n\n"
-					for _, product := range products {
-						response += formatProduct(product) + "\n"
-					}
-					msg = tgbotapi.NewMessage(ChatID, response)
-				}
-			}
 		case "search_category": //поиск категорий
 			action = "search_category"
 			waitingCategory[ChatID] = true // поднимаем флаг поиска
