@@ -14,6 +14,19 @@ func NewOrderRepo(db *sql.DB) *OrderRepo {
 	return &OrderRepo{db: db}
 }
 
+func (r *OrderRepo) CreateOrder(userID int64) (*models.Order, error) {
+	query := `
+        INSERT INTO orders (user_id, status) 
+        VALUES ($1, 'new') 
+        RETURNING id, user_id, amount, status, created_at`
+
+	var order models.Order
+	err := r.db.QueryRow(query, userID).Scan(
+		&order.ID, &order.UserID, &order.Amount, &order.Status, &order.CreatedAt,
+	)
+	return &order, err
+}
+
 func (r *OrderRepo) AllOrders() ([]models.Order, error) {
 	query := `
 	SELECT orders.id, orders.user_id, orders.amount, orders.status, orders.created_at
@@ -69,19 +82,6 @@ func (r *OrderRepo) OrderItems(orderID int) ([]models.OrderItem, error) {
 		items = append(items, item)
 	}
 	return items, nil
-}
-
-func (r *OrderRepo) CreateOrder(userID int64) (*models.Order, error) {
-	query := `
-        INSERT INTO orders (user_id, status) 
-        VALUES ($1, 'new') 
-        RETURNING id, user_id, amount, status, created_at`
-
-	var order models.Order
-	err := r.db.QueryRow(query, userID).Scan(
-		&order.ID, &order.UserID, &order.Amount, &order.Status, &order.CreatedAt,
-	)
-	return &order, err
 }
 
 func (r *OrderRepo) UserOrder(userID int64) ([]models.Order, error) {
@@ -185,6 +185,27 @@ func (r *OrderRepo) AddItemToCart(orderID, productID int, quantity int, price fl
 	return err
 }
 
+func (r *OrderRepo) SearchOrder(orderID int) (*models.Order, error) {
+	query := `
+        SELECT id, user_id, amount, status, created_at
+        FROM orders 
+        WHERE id = $1`
+	var order models.Order
+	err := r.db.QueryRow(query, orderID).Scan(
+		&order.ID, &order.UserID, &order.Amount,
+		&order.Status, &order.CreatedAt)
+
+	if err != nil {
+		if err == sql.ErrNoRows {
+			log.Printf("заказ с ID %d не найден", orderID)
+		}
+		log.Printf("Ошибка поиска заказа ID %d: %v", orderID, err)
+		return nil, err
+	}
+
+	return &order, nil
+}
+
 func (r *OrderRepo) PaginateOrders(limit, offset int) ([]models.Order, error) {
 	query := `
         SELECT id, user_id, amount, status, created_at
@@ -219,4 +240,57 @@ func (r *OrderRepo) CountOrders() (int, error) { //подсчёт заказов
 	var count int
 	err := r.db.QueryRow(query).Scan(&count) //query для SELECT с 1 строкой
 	return count, err
+}
+
+func (r *OrderRepo) PaginateUserOrders(UserID, limit, offset int) ([]models.Order, error) {
+	query := `
+        SELECT id, user_id, amount, status, created_at
+        FROM orders
+        WHERE status = 'new' and user_id = $1
+        ORDER BY created_at ASC, id ASC
+        LIMIT $2 OFFSET $3`
+
+	rows, err := r.db.Query(query, UserID, limit, offset) //query для SELECT
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close() //предотвращает утечку соединений
+
+	var orders []models.Order
+	for rows.Next() { //идет по строкам и добавляет данные пока они есть. аналог while data
+		var order models.Order
+		err := rows.Scan(
+			&order.ID, &order.UserID, &order.Amount, &order.Status, &order.CreatedAt,
+		)
+		if err != nil {
+			log.Printf("Ошибка скана: %v", err)
+			return nil, err
+		}
+		orders = append(orders, order)
+	}
+	return orders, nil
+}
+
+func (r *OrderRepo) CountUserOrders(UserID int) (int, error) { //подсчёт заказов пользователя для пагинации
+	query := `SELECT COUNT(*) FROM orders WHERE user_id = $1`
+	var count int
+	err := r.db.QueryRow(query, UserID).Scan(&count) //query для SELECT с 1 строкой
+	return count, err
+}
+
+func (r *OrderRepo) DeleteOrder(orderID int) error {
+	query := `DELETE From orders WHERE id = $1`
+
+	result, err := r.db.Exec(query, orderID)
+	if err != nil {
+		log.Printf("Ошибка удаления заказа: %v", err)
+		return err
+	}
+
+	rowsAffected, _ := result.RowsAffected()
+	if rowsAffected == 0 {
+		log.Printf("заказ с ID %d не найден", orderID)
+		return err
+	}
+	return nil
 }

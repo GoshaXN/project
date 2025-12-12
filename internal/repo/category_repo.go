@@ -104,14 +104,14 @@ func (r *CategoryRepo) UpdateCategory(category *models.Category) error {
 }
 
 func (r *CategoryRepo) DeleteCategory(categoryID int) error {
-	query := `
-        WITH deleted_order_items AS (DELETE FROM order_items WHERE product_id = $1)
-        DELETE FROM products WHERE id = $1`
+	query := `DELETE FROM categories WHERE id = $1`
+
 	_, err := r.db.Exec(query, categoryID)
 	if err != nil {
 		log.Printf("Ошибка удаления категории: %v", err)
 		return err
 	}
+
 	return nil
 }
 

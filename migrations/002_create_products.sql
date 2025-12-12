@@ -4,7 +4,7 @@ CREATE TABLE IF NOT EXISTS products (
     description TEXT,
     price DECIMAL(10,2) NOT NULL,
     quantity INTEGER DEFAULT 0,
-    category_id INTEGER REFERENCES categories(id),
+    category_id INTEGER REFERENCES categories(id) ON DELETE CASCADE,
     weight VARCHAR(50),
     flavor VARCHAR(100),
     brand VARCHAR(100) DEFAULT 'SportBrand',
