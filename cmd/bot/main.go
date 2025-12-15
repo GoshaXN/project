@@ -5,6 +5,7 @@ import (
 	"project/internal/config"
 	"project/internal/db"
 	"project/internal/handlers"
+
 	"project/internal/repo"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
@@ -26,12 +27,14 @@ func main() {
 	}
 	defer db.Close()
 	//создание бота
-	bot, err := tgbotapi.NewBotAPI(cfg.BotToken)
+	Bot, err := tgbotapi.NewBotAPI(cfg.BotToken)
 	if err != nil {
 		log.Panic("Ошибка создания бота", err)
 	}
-	bot.Debug = false
-	log.Printf("Authorize %s", bot.Self.UserName)
+	Bot.Debug = false
+	log.Printf("Authorize %s", Bot.Self.UserName)
 
-	handlers.HandleUpdates(bot, ProductRepo, CategoryRepo, UserRepo, OrderRepo)
+	handler := handlers.NewHandler(Bot, ProductRepo, CategoryRepo, UserRepo, OrderRepo) // инициализация обработчика
+
+	handler.MainHandler() // запуск обработчика
 }

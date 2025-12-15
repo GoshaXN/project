@@ -210,7 +210,6 @@ func (r *OrderRepo) PaginateOrders(limit, offset int) ([]models.Order, error) {
 	query := `
         SELECT id, user_id, amount, status, created_at
         FROM orders
-        WHERE status = 'new'
         ORDER BY created_at ASC, id ASC
         LIMIT $1 OFFSET $2`
 
@@ -236,7 +235,7 @@ func (r *OrderRepo) PaginateOrders(limit, offset int) ([]models.Order, error) {
 }
 
 func (r *OrderRepo) CountOrders() (int, error) { //подсчёт заказов для пагинации
-	query := `SELECT COUNT(*) FROM orders WHERE status = 'new'`
+	query := `SELECT COUNT(*) FROM orders`
 	var count int
 	err := r.db.QueryRow(query).Scan(&count) //query для SELECT с 1 строкой
 	return count, err
@@ -246,7 +245,7 @@ func (r *OrderRepo) PaginateUserOrders(UserID, limit, offset int) ([]models.Orde
 	query := `
         SELECT id, user_id, amount, status, created_at
         FROM orders
-        WHERE status = 'new' and user_id = $1
+        WHERE user_id = $1
         ORDER BY created_at ASC, id ASC
         LIMIT $2 OFFSET $3`
 
