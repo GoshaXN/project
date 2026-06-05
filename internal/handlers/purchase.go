@@ -74,15 +74,20 @@ func (h *Handler) Purchase(callback *tgbotapi.CallbackQuery) {
 		h.mu.Lock()
 		h.SelectProduct[ChatID] = productID
 		h.mu.Unlock()
-		response := fmt.Sprintf("Выбран товар: %s (%s)\nЦена: %.2f руб.\nВыберите количество:", product.Name, product.Flavor, product.Price)
-		keyboard := h.CreateBuyingKeyboard(1) //создает клавиатуру покупки
-		editMsg := tgbotapi.NewEditMessageText(ChatID, MessageID, response)
-		editMsg.ReplyMarkup = &keyboard
-		h.Bot.Send(editMsg)
+
+		if product.Photo != "" {
+			photoMsg := tgbotapi.NewPhoto(ChatID, tgbotapi.FileID(product.Photo))
+			photoMsg.Caption = fmt.Sprintf("Выбран товар: %s (%s)\nЦена: %.2f руб.\nВыберите количество:", product.Name, product.Flavor, product.Price)
+			photoMsg.ReplyMarkup = h.CreateBuyingKeyboard(1)
+			h.Bot.Send(photoMsg)
+		} else {
+			msg := tgbotapi.NewMessage(ChatID, fmt.Sprintf("Выбран товар: %s (%s)\nЦена: %.2f руб.\nВыберите количество:", product.Name, product.Flavor, product.Price))
+			msg.ReplyMarkup = h.CreateBuyingKeyboard(1)
+			h.Bot.Send(msg)
+		}
 
 		callbackConfig := tgbotapi.NewCallback(callback.ID, "")
 		h.Bot.Send(callbackConfig)
-		//log.Printf("user_id: %d, username: %s, action: %s", callback.From.ID, callback.From.FirstName, action)
 		return
 	}
 	if strings.HasPrefix(data, "buying_") { //после выбора товара выбор количества
@@ -99,7 +104,6 @@ func (h *Handler) Purchase(callback *tgbotapi.CallbackQuery) {
 		case "add":
 			total_quantity += 1
 			//action = "buying_add_" + fmt.Sprintf("%d", total_quantity)
-
 		case "del":
 			total_quantity -= 1
 			//action = "buying_del_" + fmt.Sprintf("%d", total_quantity)
@@ -136,104 +140,58 @@ func (h *Handler) Purchase(callback *tgbotapi.CallbackQuery) {
 		return
 	}
 	if data == "confirm" || data == "cancell" {
-
+		h.mu.RLock()
 		productID, hasProduct := h.SelectProduct[ChatID]
-
-		if data == "confirm" && hasProduct { //обработка добавления товара в корзину с укаанным количеством
-			//action = "confirm_purchase"
-			var quantity int = 1
-			if storedquantity, exist := h.SelectQuantity[ChatID]; exist {
-				quantity = storedquantity
-			}
-			users, err := h.userService.SearchUser(fmt.Sprintf("%d", ChatID))
-			if err != nil || len(users) == 0 {
-				msg := tgbotapi.NewMessage(ChatID, "Пользователь не найден")
+		h.mu.RUnlock()
+		if data == "confirm" && hasProduct {
+			token := h.GetTokenFromCallback(callback)
+			if token == "" {
+				msg := tgbotapi.NewMessage(ChatID, "Сначала выполните /login")
 				h.Bot.Send(msg)
 				return
-			} else {
-				user := users[0]
-				products, err := h.productService.SearchProduct(fmt.Sprintf("%d", productID))
-				if err != nil || len(products) == 0 {
-					msg := tgbotapi.NewMessage(ChatID, "Товар не найден")
-					h.Bot.Send(msg)
-					return
-				} else {
-					product := products[0]
-
-					cart, err := h.orderService.DetailCart(int64(user.ID))
-					if err != nil {
-						msg := tgbotapi.NewMessage(ChatID, fmt.Sprintf("Ошибка при работе с корзиной: %v", err))
-						h.Bot.Send(msg)
-						return
-					} else if cart == nil {
-						order, err := h.orderService.CreateOrder(int64(user.ID))
-						if err != nil {
-							msg := tgbotapi.NewMessage(ChatID, fmt.Sprintf("Ошибка создания заказа: %v", err))
-							h.Bot.Send(msg)
-							return
-						} else {
-							err := h.orderService.AddItemToCart(order.ID, productID, quantity, product.Price)
-							if err != nil {
-								msg := tgbotapi.NewMessage(ChatID, fmt.Sprintf("Ошибка добавления товара в корзину: %v", err))
-								h.Bot.Send(msg)
-								return
-							} else {
-								msg := tgbotapi.NewMessage(ChatID,
-									fmt.Sprintf("Товар добавлен в корзину\n\nЗаказ: #%d\nТовар: %s\nЦена товара: %.2f руб.\nКоличество: %d\nЦена: %.2f руб.",
-										order.ID, product.Name, product.Price, quantity,
-										product.Price*float64(quantity)))
-
-								h.Bot.Send(msg)
-
-							}
-						}
-					} else {
-						err := h.orderService.AddItemToCart(cart.Order.ID, productID, quantity, product.Price) //добавление товара в существующую корзину
-						if err != nil {
-							msg := tgbotapi.NewMessage(ChatID, fmt.Sprintf("Ошибка добавления товара в корзину: %v", err))
-							h.Bot.Send(msg)
-							return
-						} else {
-							updatedCart, err := h.orderService.DetailCart(int64(user.ID))
-							if err != nil {
-								msg := tgbotapi.NewMessage(ChatID, fmt.Sprintf("Ошибка получения обновленной корзины: %v", err))
-								h.Bot.Send(msg)
-								return
-							} else {
-								var totalSum float64 //обновление суммы
-								for _, item := range updatedCart.Items {
-									totalSum += item.Price * float64(item.Quantity)
-								}
-								msg1 := tgbotapi.NewMessage(ChatID,
-									fmt.Sprintf("Товар добавлен в корзину\n\nЗаказ: #%d\nТовар: %s (%s)\nЦена товара: %.2f руб.\nКоличество: %d\nСумма за товар: %.2f руб.\nСумма заказа: %.2f руб.",
-										cart.Order.ID, product.Name, product.Flavor, product.Price, quantity,
-										product.Price*float64(quantity), totalSum))
-								h.mu.Lock()
-								delete(h.SelectProduct, ChatID)  // очищается состояние выбора товара
-								delete(h.SelectCategory, ChatID) // очищается состояние выбора категории
-								delete(h.BuyingState, ChatID)    // очищается состояние покупки
-								delete(h.SelectQuantity, ChatID) //очищается состояние покупки
-								h.mu.Unlock()
-								answermsg := tgbotapi.NewMessage(ChatID, "Хотите выбрать ещё товары?")
-								keyboard := tgbotapi.NewInlineKeyboardMarkup(
-									tgbotapi.NewInlineKeyboardRow(
-										tgbotapi.NewInlineKeyboardButtonData("Да", "buyproducts"),
-										tgbotapi.NewInlineKeyboardButtonData("Нет", "cart"),
-									),
-								)
-								answermsg.ReplyMarkup = keyboard
-								h.Bot.Send(msg1)
-								h.Bot.Send(answermsg)
-							}
-						}
-					}
-				}
 			}
-			editMsg := tgbotapi.NewEditMessageReplyMarkup(
-				ChatID,
-				MessageID,
-				tgbotapi.NewInlineKeyboardMarkup(),
+			user, err := h.authService.AuthenticateUser(token)
+			if err != nil {
+				msg := tgbotapi.NewMessage(ChatID, "Ошибка аутентификации")
+				h.Bot.Send(msg)
+				return
+			}
+
+			var quantity int = 1
+			if stored, ok := h.SelectQuantity[ChatID]; ok {
+				quantity = stored
+			}
+
+			order, product, err := h.orderService.AddToCart(user.ID, productID, quantity)
+			if err != nil {
+				msg := tgbotapi.NewMessage(ChatID, fmt.Sprintf("Ошибка: %v", err))
+				h.Bot.Send(msg)
+				return
+			}
+
+			h.mu.Lock()
+			delete(h.SelectProduct, ChatID)
+			delete(h.SelectCategory, ChatID)
+			delete(h.BuyingState, ChatID)
+			delete(h.SelectQuantity, ChatID)
+			h.mu.Unlock()
+
+			totalSum := float64(quantity) * product.Price
+			msgText := fmt.Sprintf("Товар добавлен в корзину\n\nЗаказ: #%d\nТовар: %s (%s)\nЦена товара: %.2f руб.\nКоличество: %d\nСумма за товар: %.2f руб.",
+				order.ID, product.Name, product.Flavor, product.Price, quantity, totalSum)
+			h.Bot.Send(tgbotapi.NewMessage(ChatID, msgText))
+
+			keyboard := tgbotapi.NewInlineKeyboardMarkup(
+				tgbotapi.NewInlineKeyboardRow(
+					tgbotapi.NewInlineKeyboardButtonData("Да", "buyproducts"),
+					tgbotapi.NewInlineKeyboardButtonData("Нет", "cart"),
+				),
 			)
+			msg2 := tgbotapi.NewMessage(ChatID, "Хотите выбрать ещё товары?")
+			msg2.ReplyMarkup = keyboard
+			h.Bot.Send(msg2)
+
+			editMsg := tgbotapi.NewEditMessageReplyMarkup(ChatID, MessageID, tgbotapi.NewInlineKeyboardMarkup())
 			h.Bot.Send(editMsg)
 
 		} else if data == "cancell" { //обработка кнопи отмены

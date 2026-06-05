@@ -205,17 +205,27 @@ func (h *Handler) Pagination(callback *tgbotapi.CallbackQuery) {
 			}
 
 			if handler.AuthRequired {
-				if !h.AuthenticateCommand(3, callback) {
+				_, access := h.AuthenticateCommand(3, callback)
+				if !access {
 					msg := tgbotapi.NewMessage(callback.From.ID, "Недостаточно прав для совершения команды")
 					h.Bot.Send(msg)
 					return
 				}
 			}
-			h.ShowPagination(h.Bot, ChatID, MessageID, page,
-				handler.CountFunc,
-				handler.PaginationFunc,
-				handler.formatFunc,
-				handler.title, dataType, handler.showKeyboard)
+			usePhotos := dataType == "products" || dataType == "buyproducts" || dataType == "buycategories"
+			if usePhotos {
+				h.ShowPaginationWithPhotos(h.Bot, ChatID, MessageID, page,
+					handler.CountFunc,
+					handler.PaginationFunc,
+					handler.formatFunc,
+					handler.title, dataType, handler.showKeyboard)
+			} else {
+				h.ShowPagination(h.Bot, ChatID, MessageID, page,
+					handler.CountFunc,
+					handler.PaginationFunc,
+					handler.formatFunc,
+					handler.title, dataType, handler.showKeyboard)
+			}
 
 			callbackConfig := tgbotapi.NewCallback(callback.ID, "")
 			h.Bot.Send(callbackConfig)

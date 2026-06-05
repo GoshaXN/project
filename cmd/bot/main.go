@@ -2,6 +2,7 @@ package main
 
 import (
 	"log"
+	"os"
 	"project/internal/config"
 	"project/internal/db"
 	"project/internal/handlers"
@@ -15,12 +16,12 @@ import (
 func main() {
 	cfg, err := config.Load()
 	if err != nil {
-		log.Panic("Ошибка загрузки конфига", err)
+		log.Printf("Ошибка загрузки конфига: %v", err)
 	}
 	//инициализация бд, репозиториев
 	db, err := db.NewPostgresDB(cfg)
 	if err != nil {
-		log.Panic("Ошибка подключения к PG4", err)
+		log.Printf("Ошибка подключения к PG4: %v", err)
 	}
 	defer db.Close()
 
@@ -32,7 +33,7 @@ func main() {
 	ProductService := service.NewProductService(productRepo)
 	CategoryService := service.NewCategoryService(categoryRepo)
 	UserService := service.NewUserService(userRepo)
-	OrderService := service.NewOrderService(orderRepo)
+	OrderService := service.NewOrderService(orderRepo, ProductService)
 
 	jwtSecret := "sfdkgfksdfnm,"
 	tokenDuration := 10 * time.Minute
@@ -42,13 +43,17 @@ func main() {
 	//создание бота
 	Bot, err := tgbotapi.NewBotAPI(cfg.BotToken)
 	if err != nil {
-		log.Panic("Ошибка создания бота", err)
+		log.Printf("Ошибка создания бота: %v", err)
 	}
 	Bot.Debug = false
 	log.Printf("Authorize %s", Bot.Self.UserName)
 
 	handler := handlers.NewHandler(Bot, ProductService, CategoryService, UserService, OrderService, AuthService) // инициализация обработчика
 	log.Printf("Bot Started")
-
+	data, err := os.ReadFile("default_photo.txt")
+	if err == nil {
+		handler.DefaultPhotoFileID = string(data)
+		log.Println("Загружено дефолтное фото из файла")
+	}
 	handler.MainHandler() // запуск обработчика
 }

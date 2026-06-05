@@ -32,6 +32,7 @@ func (h *Handler) Start(input interface{}) { // кнопка старт
 	delete(h.SelectCategory, ChatID)
 	delete(h.BuyingState, ChatID)
 	delete(h.SelectQuantity, ChatID)
+	delete(h.PhotoPaginationState, ChatID)
 	h.mu.Unlock()
 	keyboard := tgbotapi.NewInlineKeyboardMarkup(
 		tgbotapi.NewInlineKeyboardRow(
@@ -60,6 +61,19 @@ func (h *Handler) Start(input interface{}) { // кнопка старт
 	)
 	msg.ReplyMarkup = keyboard
 	h.Bot.Send(msg)
+}
+
+func (h *Handler) SetDefaultPhoto(update tgbotapi.Update) {
+	_, access := h.AuthenticateCommand(3, update) // только для админов
+	if !access {
+		return
+	}
+	h.mu.Lock()
+	h.WaitingDefaultPhoto[update.Message.Chat.ID] = true
+	h.mu.Unlock()
+	msg := tgbotapi.NewMessage(update.Message.Chat.ID, "Отправьте фото, которое будет использоваться как заглушка для товаров без фото")
+	h.Bot.Send(msg)
+
 }
 
 func (h *Handler) Help(input interface{}) { // кнопка хелп

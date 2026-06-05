@@ -12,7 +12,7 @@ import (
 
 func (h *Handler) CreateUser(update tgbotapi.Update) { // создание юзера
 	// Проверка авторизации и прав
-	access := h.AuthenticateCommand(3, update)
+	_, access := h.AuthenticateCommand(3, update)
 	if !access {
 		msg := tgbotapi.NewMessage(update.Message.Chat.ID, "Недостаточно прав для совершения команды")
 		h.Bot.Send(msg)
@@ -96,7 +96,7 @@ func (h *Handler) SearchUser(input interface{}) { //поиск юзера
 		update := v
 		searchQuery = strings.TrimSpace(v.Message.CommandArguments()) //TrimSpace удаляет пробелы в начале и конце строки
 		// Проверка авторизации и прав
-		access := h.AuthenticateCommand(3, update)
+		_, access := h.AuthenticateCommand(3, update)
 		if !access {
 			msg := tgbotapi.NewMessage(ChatID, "Недостаточно прав для совершения команды")
 			h.Bot.Send(msg)
@@ -114,7 +114,7 @@ func (h *Handler) SearchUser(input interface{}) { //поиск юзера
 		ChatID = v.Message.Chat.ID
 		callbackID := v.ID
 		// Проверка авторизации и прав
-		access := h.AuthenticateCommand(3, callbackID)
+		_, access := h.AuthenticateCommand(3, callbackID)
 		if !access {
 			msg := tgbotapi.NewMessage(ChatID, "Недостаточно прав для совершения команды")
 			h.Bot.Send(msg)
@@ -152,7 +152,7 @@ func (h *Handler) SearchUser(input interface{}) { //поиск юзера
 
 func (h *Handler) UpdateUser(update tgbotapi.Update) { //изменение юзера
 	// Проверка авторизации и прав
-	access := h.AuthenticateCommand(3, update)
+	_, access := h.AuthenticateCommand(3, update)
 	if !access {
 		msg := tgbotapi.NewMessage(update.Message.Chat.ID, "Отказано в доступе")
 		h.Bot.Send(msg)
@@ -204,7 +204,7 @@ func (h *Handler) UpdateUser(update tgbotapi.Update) { //изменение юз
 
 func (h *Handler) DeleteUser(update tgbotapi.Update) { // удаление пользователя
 	// Проверка авторизации и прав
-	access := h.AuthenticateCommand(3, update)
+	_, access := h.AuthenticateCommand(3, update)
 	if !access {
 		msg := tgbotapi.NewMessage(update.Message.Chat.ID, "Недостаточно прав для совершения команды")
 		h.Bot.Send(msg)

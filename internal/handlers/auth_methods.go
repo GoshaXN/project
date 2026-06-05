@@ -82,12 +82,12 @@ func (h *Handler) GetChatID(update tgbotapi.Update) int64 {
 	return 0
 }
 
-func (h *Handler) AuthenticateCommand(sec_level /*1 - all, 2 - auth, 3 - admin */ int, handler_type interface{}) bool {
+func (h *Handler) AuthenticateCommand(sec_level /*1 - all, 2 - auth, 3 - admin */ int, input interface{}) (*models.User, bool) {
 
 	var ChatID int64
 	var update tgbotapi.Update
 
-	switch v := handler_type.(type) {
+	switch v := input.(type) {
 	case tgbotapi.Update:
 		ChatID = h.GetChatID(v)
 		update = v
@@ -96,21 +96,28 @@ func (h *Handler) AuthenticateCommand(sec_level /*1 - all, 2 - auth, 3 - admin *
 		update = tgbotapi.Update{CallbackQuery: v}
 	}
 
-	if sec_level >= 2 {
-		token := h.GetTokenFromUpdate(update)
-		if token == "" {
-			msg := tgbotapi.NewMessage(ChatID, "Сначала выполните логин /login")
-			h.Bot.Send(msg)
-			return false
-		} else {
-			user, err := h.authService.AuthenticateUser(token)
-			if (err != nil || user.Role != "admin") && sec_level == 3 {
-				msg := tgbotapi.NewMessage(ChatID, "Доступ только для администратора")
-				h.Bot.Send(msg)
-				return false
-			}
-		}
-		return true
+	if sec_level < 2 {
+		return nil, true
 	}
-	return true
+
+	token := h.GetTokenFromUpdate(update)
+	if token == "" {
+		msg := tgbotapi.NewMessage(ChatID, "Сначала выполните логин /login")
+		h.Bot.Send(msg)
+		return nil, false
+	}
+
+	user, err := h.authService.AuthenticateUser(token)
+	if err != nil {
+		msg := tgbotapi.NewMessage(ChatID, "Токен недействителен /login")
+		h.Bot.Send(msg)
+		return nil, false
+	}
+
+	if sec_level == 3 && user.Role != "admin" {
+		msg := tgbotapi.NewMessage(ChatID, "У вас нет прав для выполнения команды")
+		h.Bot.Send(msg)
+		return nil, false
+	}
+	return user, true
 }

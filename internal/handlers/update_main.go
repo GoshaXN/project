@@ -2,6 +2,8 @@ package handlers
 
 import (
 	"fmt"
+	"log"
+	"os"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
@@ -20,68 +22,30 @@ func (h *Handler) ProcessCommand(update tgbotapi.Update) {
 	if update.Message == nil || !update.Message.IsCommand() {
 		return
 	}
+	command := update.Message.Command()
 
-	command := update.Message.Command() // /cmd - cmd
-
-	switch command {
-	case "start":
-		h.Start(update)
-	case "help":
-		h.Help(update)
-
-	case "create_category":
-		h.CreateCategory(update)
-	case "categories":
-		h.Categories(update)
+	switch command { //что интерфейс получает - свич
 	case "search_category":
 		h.SearchCategory(update)
-	case "search_by_category":
-		h.SearchByCategory(update)
-	case "update_category":
-		h.UpdateCategory(update)
-	case "delete_category":
-		h.DeleteCategory(update)
-
-	case "create_user":
-		h.CreateUser(update)
-	case "users":
-		h.Users(update)
+		return
 	case "search_user":
 		h.SearchUser(update)
-	case "update_user":
-		h.UpdateUser(update)
-	case "delete_user":
-		h.DeleteUser(update)
-
-	case "create_product":
-		h.CreateProduct(update)
-	case "products":
-		h.Products(update)
+		return
 	case "search_product":
 		h.SearchProduct(update)
-	case "update_product":
-		h.UpdateProduct(update)
-	case "delete_product":
-		h.DeleteProduct(update)
-
+		return
 	case "create_order":
 		h.CreateOrder(update)
-	case "orders":
-		h.Orders(update)
-	case "delete_order":
-		h.DeleteOrder(update)
+		return
 	case "cart":
 		h.Cart(update)
+		return
+	}
 
-	case "register":
-		h.Register(update)
-	case "login":
-		h.Login(update)
-	case "logout":
-		h.Logout(update)
-	case "token":
-		h.handleTokenCommand(update)
-	default:
+	// остальные через мапу
+	if handler, ok := h.commandHandlers[command]; ok {
+		handler(update)
+	} else {
 		msg := tgbotapi.NewMessage(update.Message.Chat.ID, "Неизвестная команда\nПовторите попытку")
 		h.Bot.Send(msg)
 	}
@@ -107,7 +71,9 @@ func (h *Handler) ProcessMessage(update tgbotapi.Update) { //обработка 
 				msg := tgbotapi.NewMessage(chatID, "Успешное удаление!")
 				h.Bot.Send(msg)
 			}
+			h.mu.Lock()
 			delete(h.WaitingConfirm, chatID)
+			h.mu.Unlock()
 		} else {
 			msg := tgbotapi.NewMessage(chatID, "Отмена удаления")
 			h.Bot.Send(msg)
@@ -185,8 +151,53 @@ func (h *Handler) ProcessMessage(update tgbotapi.Update) { //обработка 
 		h.mu.Lock()
 		h.WaitingCategory[chatID] = false
 		h.mu.Unlock()
+	}
+
+	h.mu.RLock()
+	pendingProductID, hasPendingPhoto := h.WaitingProductPhoto[chatID]
+	h.mu.RUnlock()
+	if hasPendingPhoto && update.Message.Photo != nil && len(update.Message.Photo) > 0 {
+		fileID := update.Message.Photo[len(update.Message.Photo)-1].FileID
+		err := h.productService.UpdateProductPhoto(pendingProductID, fileID)
+		if err != nil {
+			msg := tgbotapi.NewMessage(chatID, fmt.Sprintf("Ошибка при обновлении фотографии: %v", err))
+			h.Bot.Send(msg)
+		}
+		h.mu.Lock()
+		delete(h.WaitingProductPhoto, chatID)
+		h.mu.Unlock()
+		msg := tgbotapi.NewMessage(chatID, "Фотография обновлена")
+		h.Bot.Send(msg)
 		return
 	}
+
+	h.mu.RLock()
+	waitingDefault, ok := h.WaitingDefaultPhoto[chatID]
+	h.mu.RUnlock()
+	if ok && waitingDefault && update.Message.Photo != nil && len(update.Message.Photo) > 0 {
+		fileID := update.Message.Photo[len(update.Message.Photo)-1].FileID
+		h.mu.Lock()
+		h.DefaultPhotoFileID = fileID
+		delete(h.WaitingDefaultPhoto, chatID)
+		h.mu.Unlock()
+		err := os.WriteFile("default_photo.txt", []byte(fileID), 0644)
+		if err != nil {
+			log.Printf("Не удалось сохранить default photo: %v", err)
+		}
+		msg := tgbotapi.NewMessage(chatID, "заглушка сохранена")
+		h.Bot.Send(msg)
+		return
+	}
+	// если прислали не фото
+	if ok && waitingDefault {
+		msg := tgbotapi.NewMessage(chatID, "некорректное сообщение")
+		h.Bot.Send(msg)
+		h.mu.Lock()
+		delete(h.WaitingDefaultPhoto, chatID)
+		h.mu.Unlock()
+		return
+	}
+
 	msg := tgbotapi.NewMessage(chatID, "Неизвестная команда")
 	h.Bot.Send(msg)
 }

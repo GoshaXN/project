@@ -20,6 +20,7 @@ type ProductService interface {
 	CountProductsByCategory(categoryID int) (int, error)
 	PaginateProductsByCategory(categoryID string, limit, offset int) ([]models.Product, error)
 	PaginateProducts(limit, offset int) ([]models.Product, error)
+	UpdateProductPhoto(productID int, photoFileID string) error
 }
 
 type productService struct {
@@ -81,6 +82,10 @@ func (s *productService) UpdateProduct(product *models.Product) error {
 
 func (s *productService) DeleteProduct(id int) error {
 	return s.repo.DeleteProduct(id)
+}
+
+func (s *productService) UpdateProductPhoto(productID int, photoFileID string) error {
+	return s.repo.UpdateProductPhoto(productID, photoFileID)
 }
 
 func (s *productService) GetPaginatedProducts(limit, offset int) ([]models.Product, error) {

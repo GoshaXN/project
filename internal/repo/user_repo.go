@@ -108,7 +108,7 @@ func (r *UserRepo) SearchUser(query string) ([]models.User, error) {
 
 	rows, err := r.db.Query(searchQuery, query)
 	if err != nil {
-		log.Panic("Ошибка поиска пользователя: ", err)
+		log.Printf("Ошибка поиска пользователя: %v", err)
 		return nil, err
 	}
 	defer rows.Close()

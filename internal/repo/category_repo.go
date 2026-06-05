@@ -67,7 +67,7 @@ func (r *CategoryRepo) SearchCategory(query string) ([]models.Category, error) {
 	ORDER BY id`
 	rows, err := r.db.Query(searchQuery, query)
 	if err != nil {
-		log.Panic("Ошибка: ", err)
+		log.Printf("Ошибка: %v", err)
 		return nil, err
 	}
 	defer rows.Close()

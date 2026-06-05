@@ -19,14 +19,14 @@ func NewProductRepo(db *sql.DB) *ProductRepo {
 func (r *ProductRepo) CreateProduct(product *models.Product) error {
 	query := `
 		INSERT INTO products (name, description, price, quantity, category_id, 
-			weight, flavor, brand, servings, is_active)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+			weight, flavor, brand, servings, is_active, COALESCE(photo, ''))
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
 		RETURNING id, created_at`
 	err := r.db.QueryRow(
 		query, product.Name, product.Description,
 		product.Price, product.Quantity, product.Category_id,
 		product.Weight, product.Flavor, product.Brand,
-		product.Servings, product.IsActive).Scan(&product.ID, &product.CreatedAt)
+		product.Servings, product.IsActive, product.Photo).Scan(&product.ID, &product.CreatedAt)
 
 	if err != nil {
 		log.Printf("Ошибка создания товара: %v", err)
@@ -37,7 +37,7 @@ func (r *ProductRepo) CreateProduct(product *models.Product) error {
 
 func (r *ProductRepo) AllProducts() ([]models.Product, error) {
 	query := `SELECT id, name, description, price, quantity, category_id, 
-        weight, flavor, brand, servings, is_active, created_at
+        weight, flavor, brand, servings, is_active, created_at, COALESCE(photo, '')
         FROM products 
         WHERE is_active = true
         ORDER BY id`
@@ -55,7 +55,7 @@ func (r *ProductRepo) AllProducts() ([]models.Product, error) {
 		err := rows.Scan(
 			&product.ID, &product.Name, &product.Description, &product.Price, &product.Quantity,
 			&product.Category_id, &product.Weight, &product.Flavor, &product.Brand, &product.Servings,
-			&product.IsActive, &product.CreatedAt,
+			&product.IsActive, &product.CreatedAt, &product.Photo,
 		)
 		if err != nil {
 			log.Printf("Ошибка скана: %v", err)
@@ -69,7 +69,7 @@ func (r *ProductRepo) AllProducts() ([]models.Product, error) {
 func (r *ProductRepo) ProductsByCategory(category interface{}) ([]models.Product, error) {
 	query := `
         SELECT prod.id, prod.name, prod.description, prod.price, prod.quantity, prod.category_id, 
-               prod.weight, prod.flavor, prod.brand, prod.servings, prod.is_active, prod.created_at
+               prod.weight, prod.flavor, prod.brand, prod.servings, prod.is_active, prod.created_at, prod.COALESCE(photo, '')
         FROM products prod
         JOIN categories cat ON prod.category_id = cat.id
         WHERE products.is_active = true 
@@ -88,7 +88,7 @@ func (r *ProductRepo) ProductsByCategory(category interface{}) ([]models.Product
 		err := rows.Scan(
 			&product.ID, &product.Name, &product.Description, &product.Price, &product.Quantity,
 			&product.Category_id, &product.Weight, &product.Flavor, &product.Brand, &product.Servings,
-			&product.IsActive, &product.CreatedAt,
+			&product.IsActive, &product.CreatedAt, &product.Photo,
 		)
 		if err != nil {
 			return nil, err
@@ -101,7 +101,7 @@ func (r *ProductRepo) ProductsByCategory(category interface{}) ([]models.Product
 func (r *ProductRepo) SearchProduct(query string) ([]models.Product, error) {
 	searchQuery := `
 	SELECT id, name, description, price, quantity, category_id, 
-		weight, flavor, brand, servings, is_active, created_at
+		weight, flavor, brand, servings, is_active, created_at, COALESCE(photo, '')
 	FROM products 	
 	WHERE name ILIKE '%' || $1 || '%' 
 	OR description ILIKE '%' || $1 || '%' 
@@ -122,7 +122,7 @@ func (r *ProductRepo) SearchProduct(query string) ([]models.Product, error) {
 		err := rows.Scan(
 			&product.ID, &product.Name, &product.Description, &product.Price, &product.Quantity,
 			&product.Category_id, &product.Weight, &product.Flavor, &product.Brand, &product.Servings,
-			&product.IsActive, &product.CreatedAt,
+			&product.IsActive, &product.CreatedAt, &product.Photo,
 		)
 		if err != nil {
 			return nil, err
@@ -137,19 +137,28 @@ func (r *ProductRepo) UpdateProduct(product *models.Product) error {
 		update products 
 		set name = $2, description = $3, price = $4, quantity = $5,
 		category_id = $6, weight = $7, flavor = $8, brand = $9, 
-		servings = $10, is_active = $11
+		servings = $10, is_active = $11, photo = $12
 		WHERE id = $1`
 	_, err := r.db.Exec( //Exec для INSERT/UPDATE/DELETE
 		query, product.ID, product.Name, product.Description,
 		product.Price, product.Quantity, product.Category_id,
 		product.Weight, product.Flavor, product.Brand,
-		product.Servings, product.IsActive,
+		product.Servings, product.IsActive, product.Photo,
 	)
 	if err != nil {
 		log.Printf("Ошибка обновления товара: %v", err)
 		return err
 	}
 	return nil
+}
+
+func (r *ProductRepo) UpdateProductPhoto(productID int, photoFileID string) error {
+	query := `UPDATE products SET photo = $1 WHERE id = $2`
+	_, err := r.db.Exec(query, photoFileID, productID)
+	if err != nil {
+		log.Printf("Ошибка обновления фото товара: %v", err)
+	}
+	return err
 }
 
 func (r *ProductRepo) DeleteProduct(productID int) error {
@@ -166,7 +175,7 @@ func (r *ProductRepo) DeleteProduct(productID int) error {
 
 func (r *ProductRepo) PaginateProducts(limit, offset int) ([]models.Product, error) {
 	query := `
-        SELECT id, name, description, price, quantity, category_id, weight, flavor, servings, is_active, created_at
+        SELECT id, name, description, price, quantity, category_id, weight, flavor, servings, is_active, created_at, COALESCE(photo, '')
         FROM products
         WHERE is_active = true
         ORDER BY id ASC, created_at ASC
@@ -184,7 +193,7 @@ func (r *ProductRepo) PaginateProducts(limit, offset int) ([]models.Product, err
 		err := rows.Scan(
 			&product.ID, &product.Name, &product.Description, &product.Price, &product.Quantity,
 			&product.Category_id, &product.Weight, &product.Flavor, &product.Servings,
-			&product.IsActive, &product.CreatedAt,
+			&product.IsActive, &product.CreatedAt, &product.Photo,
 		)
 		if err != nil {
 			log.Printf("Ошибка скана: %v", err)
@@ -208,7 +217,7 @@ func (r *ProductRepo) PaginateProductsByCategory(categoryID string, limit, offse
 		return nil, err
 	}
 	query := `
-        SELECT id, name, description, price, quantity, category_id, weight, flavor, servings, is_active, created_at
+        SELECT id, name, description, price, quantity, category_id, weight, flavor, servings, is_active, created_at, COALESCE(photo, '')
         FROM products
         WHERE is_active = true AND category_id = $1
         ORDER BY created_at ASC, id ASC
@@ -224,7 +233,7 @@ func (r *ProductRepo) PaginateProductsByCategory(categoryID string, limit, offse
 		err := rows.Scan(
 			&product.ID, &product.Name, &product.Description, &product.Price, &product.Quantity,
 			&product.Category_id, &product.Weight, &product.Flavor, &product.Servings,
-			&product.IsActive, &product.CreatedAt,
+			&product.IsActive, &product.CreatedAt, &product.Photo,
 		)
 		if err != nil {
 			log.Printf("Ошибка скана: %v", err)

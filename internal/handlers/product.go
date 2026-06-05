@@ -2,7 +2,6 @@ package handlers
 
 import (
 	"fmt"
-	"log"
 	"strconv"
 	"strings"
 
@@ -13,7 +12,8 @@ import (
 
 func (h *Handler) CreateProduct(update tgbotapi.Update) { // создание товара
 	// Проверка авторизации и прав
-	if !h.AuthenticateCommand(3, update) {
+	_, access := h.AuthenticateCommand(3, update)
+	if !access {
 		msg := tgbotapi.NewMessage(update.Message.Chat.ID, "Недостаточно прав для совершения команды")
 		h.Bot.Send(msg)
 		return
@@ -52,8 +52,11 @@ func (h *Handler) CreateProduct(update tgbotapi.Update) { // создание т
 		h.Bot.Send(msg)
 		return
 	} else {
+		h.mu.Lock()
+		h.WaitingProductPhoto[update.Message.Chat.ID] = product.ID
+		h.mu.Unlock()
 		msg := tgbotapi.NewMessage(update.Message.Chat.ID,
-			fmt.Sprintf("Создан товар\nID: %d\nНазвание: %s\nОписание: %s\nЦена: %.2f\nКоличество: %d\nКатегория ID: %d\nВес: %v\nВкус: %s\nБренд: %s\nПорций: %d\nАктивен: %v",
+			fmt.Sprintf("Создан товар\nID: %d\nНазвание: %s\nОписание: %s\nЦена: %.2f\nКоличество: %d\nКатегория ID: %d\nВес: %v\nВкус: %s\nБренд: %s\nПорций: %d\nАктивен: %v\nОтпрваьте фото для товара или /skip_photo для отмены действия",
 				product.ID, product.Name, product.Description, product.Price, product.Quantity,
 				product.Category_id, product.Weight, product.Flavor, product.Brand, product.Servings,
 				product.IsActive))
@@ -61,16 +64,15 @@ func (h *Handler) CreateProduct(update tgbotapi.Update) { // создание т
 	}
 }
 
-func (h *Handler) Products(update tgbotapi.Update) { // список товаров
-
-	h.ShowPagination(h.Bot, update.Message.Chat.ID, 0, 1,
+func (h *Handler) Products(update tgbotapi.Update) { // список товаров с фото
+	h.ShowPaginationWithPhotos(h.Bot, update.Message.Chat.ID, 0, 1,
 		h.productService.CountProducts,
 		func(limit, offset int) ([]interface{}, error) {
-			orders, err := h.productService.GetPaginatedProducts(limit, offset)
+			products, err := h.productService.GetPaginatedProducts(limit, offset)
 			if err != nil {
 				return nil, err
 			}
-			return h.ConvertToInterfaceSlice(orders)
+			return h.ConvertToInterfaceSlice(products)
 		},
 		func(data interface{}) string {
 			return h.formatProduct(data.(models.Product))
@@ -83,7 +85,6 @@ func (h *Handler) Products(update tgbotapi.Update) { // список товар�
 func (h *Handler) SearchProduct(input interface{}) { // поиск товаров
 	var ChatID int64
 	var searchQuery string
-	log.Printf("start")
 	switch v := input.(type) {
 	case tgbotapi.Update:
 		ChatID = v.Message.Chat.ID
@@ -97,7 +98,6 @@ func (h *Handler) SearchProduct(input interface{}) { // поиск товаро�
 			return
 		}
 	case *tgbotapi.CallbackQuery:
-		log.Printf("continue")
 		ChatID = v.Message.Chat.ID
 		callbackID := v.ID
 		h.mu.Lock()
@@ -112,7 +112,6 @@ func (h *Handler) SearchProduct(input interface{}) { // поиск товаро�
 	default:
 		return
 	}
-	log.Printf("end")
 
 	products, err := h.productService.SearchProduct(searchQuery)
 	if err != nil {
@@ -127,18 +126,28 @@ func (h *Handler) SearchProduct(input interface{}) { // поиск товаро�
 		return
 	}
 
-	response := "Результаты поиска по запросу: " + searchQuery + "\n\n"
+	header := tgbotapi.NewMessage(ChatID, fmt.Sprintf("🔍 Результаты поиска по запросу: %s\nНайдено: %d товаров\n\n", searchQuery, len(products)))
+	h.Bot.Send(header)
+
 	for _, product := range products {
-		response += h.formatProduct(product) + "\n"
+		fileID := product.Photo
+		if fileID == "" {
+			fileID = h.DefaultPhotoFileID
+		}
+		text := h.formatProduct(product)
+		if fileID != "" {
+			photoMsg := tgbotapi.NewPhoto(ChatID, tgbotapi.FileID(fileID))
+			photoMsg.Caption = text
+			h.Bot.Send(photoMsg)
+		} else {
+			h.Bot.Send(tgbotapi.NewMessage(ChatID, text))
+		}
 	}
-	msg := tgbotapi.NewMessage(ChatID, response)
-	h.Bot.Send(msg)
 }
 
 func (h *Handler) SearchByCategory(update tgbotapi.Update) { // поиск товаров по категории
 
 	searchQuery := update.Message.CommandArguments()
-
 	if searchQuery == "" {
 		msg := tgbotapi.NewMessage(update.Message.Chat.ID, "Укажите название категории для поиска")
 		h.mu.Lock()
@@ -147,7 +156,6 @@ func (h *Handler) SearchByCategory(update tgbotapi.Update) { // поиск то�
 		h.Bot.Send(msg)
 		return
 	}
-
 	products, err := h.productService.SearchByCategory(searchQuery)
 	if err != nil {
 		fmt.Printf("error: %v", err)
@@ -170,8 +178,9 @@ func (h *Handler) SearchByCategory(update tgbotapi.Update) { // поиск то�
 }
 
 func (h *Handler) UpdateProduct(update tgbotapi.Update) { // изменение товара
-	// Проверка авторизации и прав
-	if !h.AuthenticateCommand(3, update) {
+	// проверка авторизации и прав
+	_, access := h.AuthenticateCommand(3, update)
+	if !access {
 		msg := tgbotapi.NewMessage(update.Message.Chat.ID, "Недостаточно прав для совершения команды")
 		h.Bot.Send(msg)
 		return
@@ -232,9 +241,35 @@ func (h *Handler) UpdateProduct(update tgbotapi.Update) { // изменение 
 
 }
 
+func (h *Handler) UpdateProductPhoto(update tgbotapi.Update) {
+	_, access := h.AuthenticateCommand(3, update)
+	if !access {
+		msg := tgbotapi.NewMessage(update.Message.Chat.ID, "Недостаточно прав для совершения команды")
+		h.Bot.Send(msg)
+		return
+	}
+	args := strings.Fields(update.Message.CommandArguments())
+	if len(args) == 0 {
+		msg := tgbotapi.NewMessage(update.Message.Chat.ID, "используйте команду: /update_photo productID")
+		h.Bot.Send(msg)
+		return
+	}
+	productID, err := strconv.Atoi(args[0])
+	if err != nil {
+		msg := tgbotapi.NewMessage(update.Message.Chat.ID, "ID должно быть числом")
+		h.Bot.Send(msg)
+	}
+	h.mu.Lock()
+	h.WaitingProductPhoto[update.Message.Chat.ID] = productID
+	h.mu.Unlock()
+	msg := tgbotapi.NewMessage(update.Message.Chat.ID, "Отправьте новое фото для товара")
+	h.Bot.Send(msg)
+}
+
 func (h *Handler) DeleteProduct(update tgbotapi.Update) { // удаление товара
 	// Проверка авторизации и прав
-	if !h.AuthenticateCommand(3, update) {
+	_, access := h.AuthenticateCommand(3, update)
+	if !access {
 		msg := tgbotapi.NewMessage(update.Message.Chat.ID, "Недостаточно прав для совершения команды")
 		h.Bot.Send(msg)
 		return
@@ -244,21 +279,18 @@ func (h *Handler) DeleteProduct(update tgbotapi.Update) { // удаление т
 	if len(data) == 0 {
 		msg := tgbotapi.NewMessage(update.Message.Chat.ID, "Отправьте команду в формате /delete_product product_id")
 		h.Bot.Send(msg)
-
 		return
 	}
 	productID, err := strconv.Atoi(data[0])
 	if err != nil {
 		msg := tgbotapi.NewMessage(update.Message.Chat.ID, "ID должно быть числом")
 		h.Bot.Send(msg)
-
 		return
 	}
 	product, err := h.productService.SearchProduct(fmt.Sprintf("%d", productID))
 	if err != nil || len(product) == 0 {
 		msg := tgbotapi.NewMessage(update.Message.Chat.ID, "Товар не найден")
 		h.Bot.Send(msg)
-
 		return
 	}
 	h.mu.Lock()
@@ -268,4 +300,10 @@ func (h *Handler) DeleteProduct(update tgbotapi.Update) { // удаление т
 		"Напишите + если хотите удалить товар: %s, ID = %d", product[0].Name, productID))
 	h.Bot.Send(msg)
 
+}
+
+func (h *Handler) SkipPhoto(update tgbotapi.Update) {
+	h.mu.Lock()
+	delete(h.WaitingProductPhoto, update.Message.Chat.ID)
+	h.mu.Unlock()
 }

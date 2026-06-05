@@ -32,12 +32,12 @@ func (h *Handler) formatProduct(product models.Product) string {
 }
 
 // formatUser - форматирование юзера для вывода
-func (h *Handler) formatUser(user models.User) string { // вывод юзера
+func (h *Handler) formatUser(user models.User) string { //вывод юзера
 	roleText := "Покупатель"
 	if user.Role == "admin" {
 		roleText = "admin"
 	}
-	return fmt.Sprintf("%s: %s(ID=%d)\nТелеграмм: %s (ID=%d)\nИмя: %s\nТелефон: %s\nПочта: %s\nДата регистрации: %s\n",
+	return fmt.Sprintf("%s: %s(ID=%d)\nТелеграмм: %s (TGID=%d)\nИмя: %s\nТелефон: %s\nПочта: %s\nДата регистрации: %s\n\n",
 		roleText, user.Username, user.ID, user.Username, user.TelegramID, user.FirstName,
 		user.Phone, user.Email, user.CreatedAt.Format("02.01.2006"))
 }

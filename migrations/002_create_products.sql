@@ -11,4 +11,5 @@ CREATE TABLE IF NOT EXISTS products (
     servings INTEGER DEFAULT 1,
     is_active BOOLEAN DEFAULT TRUE,
     created_at TIMESTAMP DEFAULT NOW()
+    photo TEXT;
 );

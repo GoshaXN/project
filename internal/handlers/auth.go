@@ -115,6 +115,7 @@ func (h *Handler) Logout(update tgbotapi.Update) { //выход из аккау�
 	delete(h.WaitingCategory, chatID)
 	delete(h.WaitingConfirm, chatID)
 	delete(h.PaginationState, chatID)
+	delete(h.PhotoPaginationState, chatID)
 	h.mu.Unlock()
 	msg := tgbotapi.NewMessage(chatID, "Успешный выход. Вход: /login")
 	h.Bot.Send(msg)

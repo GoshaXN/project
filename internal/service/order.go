@@ -19,14 +19,18 @@ type OrderService interface {
 	PaginateUserOrders(UserID, limit, offset int) ([]models.Order, error)
 	CountUserOrders(UserID int) (int, error)
 	DeleteOrder(orderID int) error
+	AddToCart(userID int64, productID int, quantity int) (*models.Order, *models.Product, error)
 }
 
 type orderService struct {
-	repo *repo.OrderRepo
+	repo           *repo.OrderRepo
+	productService ProductService
 }
 
-func NewOrderService(repo *repo.OrderRepo) OrderService {
-	return &orderService{repo: repo}
+func NewOrderService(repo *repo.OrderRepo, productService ProductService) OrderService {
+	return &orderService{
+		repo:           repo,
+		productService: productService}
 }
 
 func (s *orderService) CreateOrder(userID int64) (*models.Order, error) {
@@ -119,8 +123,43 @@ func (s *orderService) CountUserOrders(userID int) (int, error) {
 }
 
 func (s *orderService) DeleteOrder(orderID int) error {
-	if orderID <= 0 {
-		return fmt.Errorf("ID заказа обязателен")
+	_, err := s.repo.SearchOrder(orderID)
+	if err != nil {
+		return fmt.Errorf("ошибка при поиске заказа: %v", err)
 	}
-	return s.repo.DeleteOrder(orderID)
+
+	err = s.repo.DeleteOrder(orderID)
+	if err != nil {
+		return fmt.Errorf("ошибка при удалении заказа: %v", err)
+	}
+	return nil
+}
+
+func (s *orderService) AddToCart(userID int64, productID int, quantity int) (*models.Order, *models.Product, error) {
+
+	product, err := s.productService.GetProductByID(productID)
+	if err != nil {
+		return nil, nil, fmt.Errorf("ошибка, товар не найден: %v", err)
+	}
+
+	cart, err := s.repo.DetailCart(userID)
+	if err != nil {
+		return nil, nil, fmt.Errorf("ошибка при получении корзины: %v", err)
+	}
+
+	var order *models.Order
+	if cart == nil {
+		order, err = s.repo.CreateOrder(userID)
+		if err != nil {
+			return nil, nil, fmt.Errorf("ошибка при создании заказа: %v", err)
+		}
+	} else {
+		order = &cart.Order
+	}
+
+	err = s.repo.AddItemToCart(order.ID, productID, quantity, product.Price)
+	if err != nil {
+		return nil, nil, fmt.Errorf("ошибка при добавлении товара в корзину: %v", err)
+	}
+	return order, product, nil
 }

@@ -72,7 +72,7 @@ func (h *Handler) CreateOrder(input interface{}) {
 
 func (h *Handler) Orders(update tgbotapi.Update) { // список всех заказов
 	// Проверка авторизации и прав
-	access := h.AuthenticateCommand(3, update)
+	_, access := h.AuthenticateCommand(3, update)
 	if !access {
 		msg := tgbotapi.NewMessage(update.Message.Chat.ID, "Недостаточно прав для совершения команды")
 		h.Bot.Send(msg)
@@ -98,7 +98,7 @@ func (h *Handler) Orders(update tgbotapi.Update) { // список всех за
 
 func (h *Handler) DeleteOrder(update tgbotapi.Update) { // удаление заказа
 	// Проверка авторизации и прав
-	access := h.AuthenticateCommand(3, update)
+	user, access := h.AuthenticateCommand(3, update)
 	if !access {
 		msg := tgbotapi.NewMessage(update.Message.Chat.ID, "Недостаточно прав для совершения команды")
 		h.Bot.Send(msg)
@@ -117,12 +117,14 @@ func (h *Handler) DeleteOrder(update tgbotapi.Update) { // удаление за
 		h.Bot.Send(msg)
 		return
 	}
+
 	order, err := h.orderService.SearchOrder(orderID)
 	if err != nil {
-		msg := tgbotapi.NewMessage(update.Message.Chat.ID, fmt.Sprintf("Ошибка поиска заказа: %v", err))
+		msg := tgbotapi.NewMessage(update.Message.Chat.ID, fmt.Sprintf("Ошибка удаления заказа: %v", err))
 		h.Bot.Send(msg)
 		return
 	}
+
 	if order == nil {
 		msg := tgbotapi.NewMessage(update.Message.Chat.ID, "Заказ не найден")
 		h.Bot.Send(msg)
@@ -134,9 +136,10 @@ func (h *Handler) DeleteOrder(update tgbotapi.Update) { // удаление за
 		return h.orderService.DeleteOrder(orderID)
 	}
 	h.mu.Unlock()
+
 	msg := tgbotapi.NewMessage(update.Message.Chat.ID,
-		fmt.Sprintf("Напишите + если хотите удалить заказ с ID = %d\nПользователь: %d\nСумма: %.2f\nСтатус: %s",
-			order.ID, order.UserID, order.Amount, order.Status))
+		fmt.Sprintf("Напишите + если хотите удалить заказ с ID = %d\nПользователь: %s (ID = %d)\nСумма: %.2f\nСтатус: %s",
+			order.ID, user.FirstName, user.ID, order.Amount, order.Status))
 	h.Bot.Send(msg)
 
 }

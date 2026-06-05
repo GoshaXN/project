@@ -67,6 +67,86 @@ func (h *Handler) ShowPagination(bot *tgbotapi.BotAPI, ChatID int64, MessageID i
 	}
 }
 
+func (h *Handler) ShowPaginationWithPhotos(
+	bot *tgbotapi.BotAPI, chatID int64, oldTextMsgID int, page int, countData func() (int, error), paginationFunc func(limit, offset int) ([]interface{}, error),
+	formatFunc func(interface{}) string,
+	title string, paginationType string, showKeyboard bool,
+) {
+
+	const perPage = 5
+	offset := (page - 1) * perPage
+
+	total, err := countData()
+	if err != nil || total == 0 {
+		msg := tgbotapi.NewMessage(chatID, "нет данных")
+		bot.Send(msg)
+		return
+	}
+
+	data, err := paginationFunc(perPage, offset)
+	if err != nil || len(data) == 0 {
+		msg := tgbotapi.NewMessage(chatID, "ошибка загрузки")
+		bot.Send(msg)
+		return
+	}
+
+	pages := (total + perPage - 1) / perPage
+	response := fmt.Sprintf("%s (страница %d/%d)\n\n", title, page, pages)
+	for _, item := range data {
+		response += formatFunc(item)
+	}
+
+	var textMsgID int
+	if oldTextMsgID == 0 {
+		sendMsg := tgbotapi.NewMessage(chatID, response)
+		sendMsg.ReplyMarkup = h.CreatePaginationKeyboard(page, pages, paginationType, data, showKeyboard)
+		sent, _ := bot.Send(sendMsg)
+		textMsgID = sent.MessageID
+	} else {
+		editMsg := tgbotapi.NewEditMessageText(chatID, oldTextMsgID, response)
+		editMsg.ReplyMarkup = &tgbotapi.InlineKeyboardMarkup{
+			InlineKeyboard: h.CreatePaginationKeyboard(page, pages, paginationType, data, showKeyboard).InlineKeyboard,
+		}
+
+		bot.Send(editMsg)
+		textMsgID = oldTextMsgID
+	}
+
+	h.mu.Lock()
+	if state, ok := h.PhotoPaginationState[chatID]; ok {
+		for _, msgID := range state.PhotoMessage {
+			del := tgbotapi.NewDeleteMessage(chatID, msgID)
+			bot.Send(del)
+		}
+	}
+
+	var media []interface{}
+	for _, item := range data {
+		product := item.(models.Product)
+		fileID := product.Photo
+		if fileID == "" && h.DefaultPhotoFileID != "" {
+			fileID = h.DefaultPhotoFileID
+		}
+		if fileID != "" {
+			media = append(media, tgbotapi.NewInputMediaPhoto(tgbotapi.FileID(fileID)))
+		}
+	}
+
+	var photoIDs []int
+	if len(media) > 0 {
+		mediaGroup := tgbotapi.NewMediaGroup(chatID, media)
+		sentPhotos, _ := bot.SendMediaGroup(mediaGroup)
+		for _, p := range sentPhotos {
+			photoIDs = append(photoIDs, p.MessageID)
+		}
+	}
+
+	h.PhotoPaginationState[chatID] = &PhotoPaginationState{
+		TextMessageID: textMsgID,
+		PhotoMessage:  photoIDs,
+	}
+	h.mu.Unlock()
+}
 func (h *Handler) CreatePaginationKeyboard(CurrentPage, Pages int, Type string, data []interface{}, showKeyboard bool) tgbotapi.InlineKeyboardMarkup { //создание клавиатуры перелистывания
 	var rows [][]tgbotapi.InlineKeyboardButton
 

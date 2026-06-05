@@ -14,18 +14,18 @@ import (
 func main() {
 	cfg, err := config.Load()
 	if err != nil {
-		log.Panic("Ошибка конфига", err)
+		log.Printf("Ошибка конфига", err)
 	}
 
 	db, err := db.NewPostgresDB(cfg)
 	if err != nil {
-		log.Panic("Ошибка подключения к PG4", err)
+		log.Printf("Ошибка подключения к PG4", err)
 	}
 	defer db.Close()
 
 	projectRoot, err := getProjectRoot()
 	if err != nil {
-		log.Panic("Ошибка в корневой папке проекта", err)
+		log.Printf("Ошибка в корневой папке проекта", err)
 	}
 
 	migrations := []string{

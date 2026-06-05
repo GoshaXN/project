@@ -11,7 +11,7 @@ import (
 )
 
 func (h *Handler) CreateCategory(update tgbotapi.Update) { //Создание категории
-	access := h.AuthenticateCommand(3, update)
+	_, access := h.AuthenticateCommand(3, update)
 	if !access {
 		msg := tgbotapi.NewMessage(update.Message.Chat.ID, "Недостаточно прав для совершения команды")
 		h.Bot.Send(msg)
@@ -132,7 +132,7 @@ func (h *Handler) SearchCategory(input interface{}) { // поиск катего
 
 func (h *Handler) UpdateCategory(update tgbotapi.Update) { // обновление категории
 
-	access := h.AuthenticateCommand(3, update)
+	_, access := h.AuthenticateCommand(3, update)
 	if !access {
 		msg := tgbotapi.NewMessage(update.Message.Chat.ID, "Недостаточно прав для совершения команды")
 		h.Bot.Send(msg)
@@ -182,7 +182,7 @@ func (h *Handler) UpdateCategory(update tgbotapi.Update) { // обновлени
 
 func (h *Handler) DeleteCategory(update tgbotapi.Update) { // удаление категории
 
-	access := h.AuthenticateCommand(3, update)
+	_, access := h.AuthenticateCommand(3, update)
 	if !access {
 		msg := tgbotapi.NewMessage(update.Message.Chat.ID, "Недостаточно прав для совершения команды")
 		h.Bot.Send(msg)
