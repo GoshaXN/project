@@ -42,7 +42,7 @@ func (h *Handler) CreateCategory(update tgbotapi.Update) { //Создание к
 		IsActive:    isActive,
 	}
 
-	err = h.CategoryRepo.CreateCategory(category)
+	err = h.categoryService.CreateCategory(category)
 	if err != nil {
 		msg := tgbotapi.NewMessage(update.Message.Chat.ID,
 			fmt.Sprintf("Ошибка создания категории: %v", err))
@@ -59,9 +59,9 @@ func (h *Handler) CreateCategory(update tgbotapi.Update) { //Создание к
 func (h *Handler) Categories(update tgbotapi.Update) { // список категорий
 
 	h.ShowPagination(h.Bot, update.Message.Chat.ID, 0, 1,
-		h.CategoryRepo.CountCategories,
+		h.categoryService.CountCategories,
 		func(limit, offset int) ([]interface{}, error) {
-			orders, err := h.CategoryRepo.PaginateCategory(limit, offset)
+			orders, err := h.categoryService.PaginateCategory(limit, offset)
 			if err != nil {
 				return nil, err
 			}
@@ -108,7 +108,7 @@ func (h *Handler) SearchCategory(input interface{}) { // поиск катего
 		return
 	}
 
-	categories, err := h.CategoryRepo.SearchCategory(searchQuery)
+	categories, err := h.categoryService.SearchCategory(searchQuery)
 	if err != nil {
 		msg := tgbotapi.NewMessage(ChatID, "Ошибка поиска")
 		h.Bot.Send(msg)
@@ -130,40 +130,6 @@ func (h *Handler) SearchCategory(input interface{}) { // поиск катего
 	h.Bot.Send(msg)
 }
 
-func (h *Handler) SearchByCategory(update tgbotapi.Update) { // поиск товаров по категории
-
-	searchQuery := update.Message.CommandArguments()
-
-	if searchQuery == "" {
-		msg := tgbotapi.NewMessage(update.Message.Chat.ID, "Укажите название категории для поиска")
-		h.mu.Lock()
-		h.WaitingCategory[update.Message.Chat.ID] = true
-		h.mu.Unlock()
-		h.Bot.Send(msg)
-		return
-	}
-
-	products, err := h.ProductRepo.ProductsByCategory(searchQuery)
-	if err != nil {
-		fmt.Printf("error: %v", err)
-		msg := tgbotapi.NewMessage(update.Message.Chat.ID, "Ошибка поиска")
-		h.Bot.Send(msg)
-		return
-	} else if len(products) == 0 {
-		msg := tgbotapi.NewMessage(update.Message.Chat.ID, "По запросу: "+searchQuery+" категорий не найдено")
-		h.Bot.Send(msg)
-		return
-	} else {
-		response := "Результаты поиска по запросу: " + searchQuery + "\n\n"
-		for _, product := range products {
-			response += h.formatProduct(product) + "\n"
-		}
-		msg := tgbotapi.NewMessage(update.Message.Chat.ID, response)
-		h.Bot.Send(msg)
-
-	}
-}
-
 func (h *Handler) UpdateCategory(update tgbotapi.Update) { // обновление категории
 
 	access := h.AuthenticateCommand(3, update)
@@ -182,7 +148,7 @@ func (h *Handler) UpdateCategory(update tgbotapi.Update) { // обновлени
 		return
 	}
 
-	categories, err := h.CategoryRepo.SearchCategory(data[0])
+	categories, err := h.categoryService.SearchCategory(data[0])
 	if err != nil || len(categories) == 0 {
 		msg := tgbotapi.NewMessage(update.Message.Chat.ID, "Категория не найдена")
 		h.Bot.Send(msg)
@@ -201,7 +167,7 @@ func (h *Handler) UpdateCategory(update tgbotapi.Update) { // обновлени
 		category.IsActive = IsActive
 	}
 
-	err = h.CategoryRepo.UpdateCategory(category)
+	err = h.categoryService.UpdateCategory(category)
 	if err != nil {
 		msg := tgbotapi.NewMessage(update.Message.Chat.ID, fmt.Sprintf("Ошибка изменения категории: %v", err))
 		h.Bot.Send(msg)
@@ -235,7 +201,7 @@ func (h *Handler) DeleteCategory(update tgbotapi.Update) { // удаление �
 		h.Bot.Send(msg)
 		return
 	}
-	categories, err := h.CategoryRepo.SearchCategory(fmt.Sprintf("%d", categoryID))
+	categories, err := h.categoryService.SearchCategory(fmt.Sprintf("%d", categoryID))
 	if err != nil || len(categories) == 0 {
 		msg := tgbotapi.NewMessage(update.Message.Chat.ID, "Категория не найдена")
 		h.Bot.Send(msg)
@@ -243,7 +209,7 @@ func (h *Handler) DeleteCategory(update tgbotapi.Update) { // удаление �
 
 	}
 	h.mu.Lock()
-	h.WaitingConfirm[update.Message.Chat.ID] = func() error { return h.CategoryRepo.DeleteCategory(categoryID) }
+	h.WaitingConfirm[update.Message.Chat.ID] = func() error { return h.categoryService.DeleteCategory(categoryID) }
 	h.mu.Unlock()
 	msg := tgbotapi.NewMessage(update.Message.Chat.ID, fmt.Sprintf(
 		"Напишите + если хотите удалить категорию: %s, %s, ID = %d", categories[0].Name, categories[0].Description, categoryID))

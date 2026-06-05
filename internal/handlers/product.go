@@ -13,16 +13,15 @@ import (
 
 func (h *Handler) CreateProduct(update tgbotapi.Update) { // создание товара
 	// Проверка авторизации и прав
-	access := h.AuthenticateCommand(3, update)
-	if !access {
+	if !h.AuthenticateCommand(3, update) {
 		msg := tgbotapi.NewMessage(update.Message.Chat.ID, "Недостаточно прав для совершения команды")
 		h.Bot.Send(msg)
 		return
 	}
 
-	data := strings.Split(update.Message.CommandArguments(), "|")
+	args := strings.Split(update.Message.CommandArguments(), "|")
 
-	if len(data) < 10 {
+	if len(args) < 10 {
 		msg := tgbotapi.NewMessage(update.Message.Chat.ID,
 			"Некорректный формат. Используйте\n /create_product name|description|flawor|brand|price|quantity|category_id|weight|servings|is_active\n")
 		h.Bot.Send(msg)
@@ -33,23 +32,22 @@ func (h *Handler) CreateProduct(update tgbotapi.Update) { // создание т
 
 	for i, field := range []*string{&product.Name, &product.Description,
 		&product.Flavor, &product.Brand} {
-		*field = data[i]
+		*field = args[i]
 	}
 
 	for i, field := range []interface{}{&product.Price, &product.Quantity, &product.Category_id, &product.Weight,
 		&product.Servings, &product.IsActive} {
 		switch field := field.(type) {
 		case *float64:
-			*field, _ = strconv.ParseFloat(data[i+4], 64)
+			*field, _ = strconv.ParseFloat(args[i+4], 64)
 		case *int:
-			*field, _ = strconv.Atoi(data[i+4])
+			*field, _ = strconv.Atoi(args[i+4])
 		case *bool:
-			*field, _ = strconv.ParseBool(data[i+4])
+			*field, _ = strconv.ParseBool(args[i+4])
 		}
 	}
 
-	err := h.ProductRepo.CreateProduct(product)
-	if err != nil {
+	if err := h.productService.CreateProduct(product); err != nil {
 		msg := tgbotapi.NewMessage(update.Message.Chat.ID, fmt.Sprintf("Ошибка создания товара: %v", err))
 		h.Bot.Send(msg)
 		return
@@ -66,9 +64,9 @@ func (h *Handler) CreateProduct(update tgbotapi.Update) { // создание т
 func (h *Handler) Products(update tgbotapi.Update) { // список товаров
 
 	h.ShowPagination(h.Bot, update.Message.Chat.ID, 0, 1,
-		h.ProductRepo.CountProducts,
+		h.productService.CountProducts,
 		func(limit, offset int) ([]interface{}, error) {
-			orders, err := h.ProductRepo.PaginateProducts(limit, offset)
+			orders, err := h.productService.GetPaginatedProducts(limit, offset)
 			if err != nil {
 				return nil, err
 			}
@@ -116,7 +114,7 @@ func (h *Handler) SearchProduct(input interface{}) { // поиск товаро�
 	}
 	log.Printf("end")
 
-	products, err := h.ProductRepo.SearchProduct(searchQuery)
+	products, err := h.productService.SearchProduct(searchQuery)
 	if err != nil {
 		msg := tgbotapi.NewMessage(ChatID, "Ошибка поиска")
 		h.Bot.Send(msg)
@@ -137,18 +135,44 @@ func (h *Handler) SearchProduct(input interface{}) { // поиск товаро�
 	h.Bot.Send(msg)
 }
 
-func (h *Handler) UpdateProduct(update tgbotapi.Update) { // изменение товара
-	// Проверка авторизации и прав
-	token := h.GetTokenFromUpdate(update)
-	if token == "" {
-		msg := tgbotapi.NewMessage(update.Message.Chat.ID, "Сначала выполните /login")
+func (h *Handler) SearchByCategory(update tgbotapi.Update) { // поиск товаров по категории
+
+	searchQuery := update.Message.CommandArguments()
+
+	if searchQuery == "" {
+		msg := tgbotapi.NewMessage(update.Message.Chat.ID, "Укажите название категории для поиска")
+		h.mu.Lock()
+		h.WaitingCategory[update.Message.Chat.ID] = true
+		h.mu.Unlock()
 		h.Bot.Send(msg)
 		return
 	}
 
-	user, err := h.AuthenticateUser(token, h.UserRepo)
-	if err != nil || user.Role != "admin" {
-		msg := tgbotapi.NewMessage(update.Message.Chat.ID, "Доступ только для администраторов")
+	products, err := h.productService.SearchByCategory(searchQuery)
+	if err != nil {
+		fmt.Printf("error: %v", err)
+		msg := tgbotapi.NewMessage(update.Message.Chat.ID, "Ошибка поиска")
+		h.Bot.Send(msg)
+		return
+	} else if len(products) == 0 {
+		msg := tgbotapi.NewMessage(update.Message.Chat.ID, "По запросу: "+searchQuery+" категорий не найдено")
+		h.Bot.Send(msg)
+		return
+	} else {
+		response := "Результаты поиска по запросу: " + searchQuery + "\n\n"
+		for _, product := range products {
+			response += h.formatProduct(product) + "\n"
+		}
+		msg := tgbotapi.NewMessage(update.Message.Chat.ID, response)
+		h.Bot.Send(msg)
+
+	}
+}
+
+func (h *Handler) UpdateProduct(update tgbotapi.Update) { // изменение товара
+	// Проверка авторизации и прав
+	if !h.AuthenticateCommand(3, update) {
+		msg := tgbotapi.NewMessage(update.Message.Chat.ID, "Недостаточно прав для совершения команды")
 		h.Bot.Send(msg)
 		return
 	}
@@ -163,7 +187,7 @@ func (h *Handler) UpdateProduct(update tgbotapi.Update) { // изменение 
 		return
 	}
 
-	products, err := h.ProductRepo.SearchProduct(data[0])
+	products, err := h.productService.SearchProduct(data[0])
 	if err != nil || len(products) == 0 {
 		msg := tgbotapi.NewMessage(update.Message.Chat.ID, "Товар не найден")
 		h.Bot.Send(msg)
@@ -190,7 +214,7 @@ func (h *Handler) UpdateProduct(update tgbotapi.Update) { // изменение 
 		*field = data[i+7]
 	}
 
-	err = h.ProductRepo.UpdateProduct(product) //внесённые изменения вносятся в товар
+	err = h.productService.UpdateProduct(product) //внесённые изменения вносятся в товар
 	if err != nil {
 		msg := tgbotapi.NewMessage(update.Message.Chat.ID, fmt.Sprintf("Ошибка изменения товара: %v", err))
 		h.Bot.Send(msg)
@@ -210,16 +234,8 @@ func (h *Handler) UpdateProduct(update tgbotapi.Update) { // изменение 
 
 func (h *Handler) DeleteProduct(update tgbotapi.Update) { // удаление товара
 	// Проверка авторизации и прав
-	token := h.GetTokenFromUpdate(update)
-	if token == "" {
-		msg := tgbotapi.NewMessage(update.Message.Chat.ID, "Сначала выполните /login")
-		h.Bot.Send(msg)
-		return
-	}
-
-	user, err := h.AuthenticateUser(token, h.UserRepo)
-	if err != nil || user.Role != "admin" {
-		msg := tgbotapi.NewMessage(update.Message.Chat.ID, "Доступ только для администраторов")
+	if !h.AuthenticateCommand(3, update) {
+		msg := tgbotapi.NewMessage(update.Message.Chat.ID, "Недостаточно прав для совершения команды")
 		h.Bot.Send(msg)
 		return
 	}
@@ -238,7 +254,7 @@ func (h *Handler) DeleteProduct(update tgbotapi.Update) { // удаление т
 
 		return
 	}
-	product, err := h.ProductRepo.SearchProduct(fmt.Sprintf("%d", productID))
+	product, err := h.productService.SearchProduct(fmt.Sprintf("%d", productID))
 	if err != nil || len(product) == 0 {
 		msg := tgbotapi.NewMessage(update.Message.Chat.ID, "Товар не найден")
 		h.Bot.Send(msg)
@@ -246,7 +262,7 @@ func (h *Handler) DeleteProduct(update tgbotapi.Update) { // удаление т
 		return
 	}
 	h.mu.Lock()
-	h.WaitingConfirm[update.Message.Chat.ID] = func() error { return h.ProductRepo.DeleteProduct(productID) }
+	h.WaitingConfirm[update.Message.Chat.ID] = func() error { return h.productService.DeleteProduct(productID) }
 	h.mu.Unlock()
 	msg := tgbotapi.NewMessage(update.Message.Chat.ID, fmt.Sprintf(
 		"Напишите + если хотите удалить товар: %s, ID = %d", product[0].Name, productID))

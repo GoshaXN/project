@@ -3,7 +3,6 @@ package handlers
 import (
 	"fmt"
 	"project/internal/models"
-	"project/internal/repo"
 )
 
 // formatCategory - форматирование категории для вывода
@@ -13,8 +12,8 @@ func (h *Handler) formatCategory(category models.Category) string {
 }
 
 // formatOrder - форматирование категории для вывода
-func (h *Handler) formatOrder(order models.Order, UserRepo *repo.UserRepo) string { //вывод заказа
-	users, err := UserRepo.SearchUser(fmt.Sprintf("%d", order.UserID))
+func (h *Handler) formatOrder(order models.Order) string { //вывод заказа
+	users, err := h.userService.SearchUser(fmt.Sprintf("%d", order.UserID))
 	if err != nil {
 		return fmt.Sprintf("Пользователь: %d не найден", order.UserID)
 	}
@@ -66,7 +65,7 @@ func (h *Handler) formatCart(order *models.Order, items []models.OrderItem) stri
 	for _, item := range items {
 		sum := item.Price * float64(item.Quantity)
 		total += sum
-		product, err := h.ProductRepo.SearchProduct(fmt.Sprintf("%d", item.ProductID))
+		product, err := h.productService.SearchProduct(fmt.Sprintf("%d", item.ProductID))
 		productName := "Товар"
 		var flavor string
 		if err == nil && product != nil {

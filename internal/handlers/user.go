@@ -47,7 +47,7 @@ func (h *Handler) CreateUser(update tgbotapi.Update) { // создание юз�
 		password = data[6]
 	}
 
-	err = h.UserRepo.CreateUser(NewUser, password)
+	err = h.userService.CreateUser(NewUser, password)
 	if err != nil {
 		msg := tgbotapi.NewMessage(update.Message.Chat.ID, fmt.Sprintf("Ошибка создания пользователя: %v", err))
 		h.Bot.Send(msg)
@@ -71,9 +71,9 @@ func (h *Handler) Users(update tgbotapi.Update) { // список юзеров
 	}
 
 	h.ShowPagination(h.Bot, update.Message.Chat.ID, 0, 1,
-		h.UserRepo.CountUsers,
+		h.userService.CountUsers,
 		func(limit, offset int) ([]interface{}, error) {
-			orders, err := h.UserRepo.PaginateUsers(limit, offset)
+			orders, err := h.userService.PaginateUsers(limit, offset)
 			if err != nil {
 				return nil, err
 			}
@@ -131,7 +131,7 @@ func (h *Handler) SearchUser(input interface{}) { //поиск юзера
 	default:
 		return
 	}
-	users, err := h.UserRepo.SearchUser(searchQuery)
+	users, err := h.userService.SearchUser(searchQuery)
 	if err != nil {
 		msg := tgbotapi.NewMessage(ChatID, "Ошибка поиска")
 		h.Bot.Send(msg)
@@ -167,7 +167,7 @@ func (h *Handler) UpdateUser(update tgbotapi.Update) { //изменение юз
 		return
 	}
 
-	users, err := h.UserRepo.SearchUser(data[0])
+	users, err := h.userService.SearchUser(data[0])
 	if err != nil || len(users) == 0 {
 		msg := tgbotapi.NewMessage(update.Message.Chat.ID, "Пользователь не найден")
 		h.Bot.Send(msg)
@@ -188,7 +188,7 @@ func (h *Handler) UpdateUser(update tgbotapi.Update) { //изменение юз
 		OldUser.TelegramID = TelegramID
 	}
 
-	err = h.UserRepo.UpdateUser(OldUser)
+	err = h.userService.UpdateUser(OldUser)
 	if err != nil {
 		msg := tgbotapi.NewMessage(update.Message.Chat.ID, fmt.Sprintf("Ошибка изменения пользователя: %v", err))
 		h.Bot.Send(msg)
@@ -223,14 +223,14 @@ func (h *Handler) DeleteUser(update tgbotapi.Update) { // удаление по�
 		h.Bot.Send(msg)
 		return
 	}
-	users, err := h.UserRepo.SearchUser(fmt.Sprintf("%d", userID))
+	users, err := h.userService.SearchUser(fmt.Sprintf("%d", userID))
 	if err != nil || len(users) == 0 {
 		msg := tgbotapi.NewMessage(update.Message.Chat.ID, "Пользователь не найден")
 		h.Bot.Send(msg)
 		return
 	}
 	h.mu.Lock()
-	h.WaitingConfirm[update.Message.Chat.ID] = func() error { return h.UserRepo.DeleteUser(userID) }
+	h.WaitingConfirm[update.Message.Chat.ID] = func() error { return h.userService.DeleteUser(userID) }
 	h.mu.Unlock()
 	msg := tgbotapi.NewMessage(update.Message.Chat.ID, fmt.Sprintf(
 		"Напишите + если хотите удалить пользователя: %s, %s, ID = %d", users[0].FirstName, users[0].Username, userID))

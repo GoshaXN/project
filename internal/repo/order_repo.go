@@ -177,11 +177,10 @@ func (r *OrderRepo) DetailCart(userID int64) (*models.OrderWithItems, error) {
 
 func (r *OrderRepo) AddItemToCart(orderID, productID int, quantity int, price float64) error {
 	tx, err := r.db.Begin() //начало транзакции: добавить товар в заказ. транзакция нужна ибо изменяются несколько ячеек
-	//Добавили или откатились
 	if err != nil {
 		return err
 	}
-	defer func() {
+	defer func() { //добавили или откатились
 		if err != nil {
 			tx.Rollback() //откат
 		}

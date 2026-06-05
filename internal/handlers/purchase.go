@@ -26,7 +26,7 @@ func (h *Handler) Purchase(callback *tgbotapi.CallbackQuery) {
 		h.SelectCategory[ChatID] = categoryID
 
 		//action = fmt.Sprintf("select_category_%s", data) //аналог ф строки конвертирующей int->str
-		categories, err := h.CategoryRepo.SearchCategory(fmt.Sprintf("%d", categoryID))
+		categories, err := h.categoryService.SearchCategory(fmt.Sprintf("%d", categoryID))
 		var categoryName string
 		if err == nil && len(categories) > 0 {
 			categoryName = categories[0].Name
@@ -35,10 +35,10 @@ func (h *Handler) Purchase(callback *tgbotapi.CallbackQuery) {
 		}
 		h.ShowPagination(h.Bot, ChatID, MessageID, 1, //1 = начальная страница
 			func() (int, error) {
-				return h.ProductRepo.CountProductsByCategory(fmt.Sprintf("%d", categoryID))
+				return h.productService.CountProductsByCategory(categoryID)
 			},
 			func(limit, offset int) ([]interface{}, error) {
-				products, err := h.ProductRepo.PaginateProductsByCategory(fmt.Sprintf("%d", categoryID), limit, offset)
+				products, err := h.productService.PaginateProductsByCategory(fmt.Sprintf("%d", categoryID), limit, offset)
 				if err != nil {
 					return nil, err
 				}
@@ -63,7 +63,7 @@ func (h *Handler) Purchase(callback *tgbotapi.CallbackQuery) {
 		}
 
 		//action = fmt.Sprintf("select_product_%s", data)
-		products, err := h.ProductRepo.SearchProduct(fmt.Sprintf("%d", productID))
+		products, err := h.productService.SearchProduct(fmt.Sprintf("%d", productID))
 		if err != nil || len(products) == 0 {
 			msg := tgbotapi.NewMessage(ChatID, "Товар не найден")
 			h.Bot.Send(msg)
@@ -114,7 +114,7 @@ func (h *Handler) Purchase(callback *tgbotapi.CallbackQuery) {
 		productID, ok := h.SelectProduct[ChatID]
 		h.mu.RUnlock()
 		if ok && productID > 0 {
-			products, err := h.ProductRepo.SearchProduct(fmt.Sprintf("%d", productID))
+			products, err := h.productService.SearchProduct(fmt.Sprintf("%d", productID))
 			if err == nil && len(products) > 0 {
 				product := products[0]
 				response = fmt.Sprintf("Выбран товар: %s\nЦена: %.2f руб.\n\nК покупке: %d",
@@ -145,14 +145,14 @@ func (h *Handler) Purchase(callback *tgbotapi.CallbackQuery) {
 			if storedquantity, exist := h.SelectQuantity[ChatID]; exist {
 				quantity = storedquantity
 			}
-			users, err := h.UserRepo.SearchUser(fmt.Sprintf("%d", ChatID))
+			users, err := h.userService.SearchUser(fmt.Sprintf("%d", ChatID))
 			if err != nil || len(users) == 0 {
 				msg := tgbotapi.NewMessage(ChatID, "Пользователь не найден")
 				h.Bot.Send(msg)
 				return
 			} else {
 				user := users[0]
-				products, err := h.ProductRepo.SearchProduct(fmt.Sprintf("%d", productID))
+				products, err := h.productService.SearchProduct(fmt.Sprintf("%d", productID))
 				if err != nil || len(products) == 0 {
 					msg := tgbotapi.NewMessage(ChatID, "Товар не найден")
 					h.Bot.Send(msg)
@@ -160,19 +160,19 @@ func (h *Handler) Purchase(callback *tgbotapi.CallbackQuery) {
 				} else {
 					product := products[0]
 
-					cart, err := h.OrderRepo.DetailCart(int64(user.ID))
+					cart, err := h.orderService.DetailCart(int64(user.ID))
 					if err != nil {
 						msg := tgbotapi.NewMessage(ChatID, fmt.Sprintf("Ошибка при работе с корзиной: %v", err))
 						h.Bot.Send(msg)
 						return
 					} else if cart == nil {
-						order, err := h.OrderRepo.CreateOrder(int64(user.ID))
+						order, err := h.orderService.CreateOrder(int64(user.ID))
 						if err != nil {
 							msg := tgbotapi.NewMessage(ChatID, fmt.Sprintf("Ошибка создания заказа: %v", err))
 							h.Bot.Send(msg)
 							return
 						} else {
-							err := h.OrderRepo.AddItemToCart(order.ID, productID, quantity, product.Price)
+							err := h.orderService.AddItemToCart(order.ID, productID, quantity, product.Price)
 							if err != nil {
 								msg := tgbotapi.NewMessage(ChatID, fmt.Sprintf("Ошибка добавления товара в корзину: %v", err))
 								h.Bot.Send(msg)
@@ -188,13 +188,13 @@ func (h *Handler) Purchase(callback *tgbotapi.CallbackQuery) {
 							}
 						}
 					} else {
-						err := h.OrderRepo.AddItemToCart(cart.Order.ID, productID, quantity, product.Price) //добавление товара в существующую корзину
+						err := h.orderService.AddItemToCart(cart.Order.ID, productID, quantity, product.Price) //добавление товара в существующую корзину
 						if err != nil {
 							msg := tgbotapi.NewMessage(ChatID, fmt.Sprintf("Ошибка добавления товара в корзину: %v", err))
 							h.Bot.Send(msg)
 							return
 						} else {
-							updatedCart, err := h.OrderRepo.DetailCart(int64(user.ID))
+							updatedCart, err := h.orderService.DetailCart(int64(user.ID))
 							if err != nil {
 								msg := tgbotapi.NewMessage(ChatID, fmt.Sprintf("Ошибка получения обновленной корзины: %v", err))
 								h.Bot.Send(msg)

@@ -20,11 +20,9 @@ func NewUserRepo(db *sql.DB) *UserRepo {
 func (r *UserRepo) CreateUser(user *models.User, password ...string) error {
 	var hashedPassoword string
 	var err error
-	if len(password) > 0 && password[0] != "" {
-		hashedPassoword, err = utils.HashPassword(password[0])
-		if err != nil {
-			return fmt.Errorf("err in hash password: %v", err)
-		}
+	hashedPassoword, err = utils.HashPassword(password[0])
+	if err != nil {
+		return fmt.Errorf("err in hash password: %v", err)
 	}
 	query := `
 		INSERT INTO users (telegram_id, username, first_name, phone, email, role, password)
@@ -131,37 +129,28 @@ func (r *UserRepo) SearchUser(query string) ([]models.User, error) {
 }
 
 func (r *UserRepo) UpdateUser(user *models.User, updatePassword ...bool) error {
-	var args []interface{}
-	var query string
-
-	updatePwd := len(updatePassword) > 0 && updatePassword[0] && user.Password != ""
-	if updatePwd {
-		query = `
-			UPDATE users
-			SET telegram_id = $2, username = $3, first_name = $4, 
-			    phone = $5, email = $6, role = $7, password = $8
-			WHERE id = $1`
-		args = []interface{}{
-			user.ID, user.TelegramID, user.Username, user.FirstName,
-			user.Phone, user.Email, user.Role, user.Password,
-		}
+	NeedUpdatePassword := len(updatePassword) > 0 && updatePassword[0] && user.Password != ""
+	var password interface{}
+	if NeedUpdatePassword {
+		password = user.Password
 	} else {
-		query = `
-			UPDATE users
-			SET telegram_id = $2, username = $3, first_name = $4, 
-			    phone = $5, email = $6, role = $7
-			WHERE id = $1`
-		args = []interface{}{
-			user.ID, user.TelegramID, user.Username, user.FirstName,
-			user.Phone, user.Email, user.Role,
-		}
+		password = nil
 	}
+
+	query := `
+	UPDATE users
+	SET telegram_id = $2, username = $3, first_name = $4,
+		phone = $5, email = $6, role = $7,
+		password = COALESCE($8, password)
+	WHERE id = $1`
+
+	args := []interface{}{
+		user.ID, user.TelegramID, user.Username, user.FirstName,
+		user.Phone, user.Email, user.Role, password,
+	}
+
 	_, err := r.db.Exec(query, args...)
-	if err != nil {
-		log.Printf("Ошибка изменения пользователя: %v", err)
-		return err
-	}
-	return nil
+	return err
 }
 
 func (r *UserRepo) UpdatePassword(userID int, NewPassword string) error {

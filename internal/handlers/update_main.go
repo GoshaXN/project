@@ -119,7 +119,7 @@ func (h *Handler) ProcessMessage(update tgbotapi.Update) { //обработка 
 	waiting, ok := h.WaitingProduct[chatID]
 	h.mu.RUnlock()
 	if ok && waiting {
-		products, err := h.ProductRepo.SearchProduct(text)
+		products, err := h.productService.SearchProduct(text)
 		if err != nil {
 			msg := tgbotapi.NewMessage(chatID, "Ошибка поиска")
 			h.Bot.Send(msg)
@@ -143,7 +143,7 @@ func (h *Handler) ProcessMessage(update tgbotapi.Update) { //обработка 
 	waiting, ok = h.WaitingUser[chatID]
 	h.mu.RUnlock()
 	if ok && waiting {
-		users, err := h.UserRepo.SearchUser(text)
+		users, err := h.userService.SearchUser(text)
 		if err != nil {
 			msg := tgbotapi.NewMessage(chatID, "Ошибка поиска")
 			h.Bot.Send(msg)
@@ -167,7 +167,7 @@ func (h *Handler) ProcessMessage(update tgbotapi.Update) { //обработка 
 	waiting, ok = h.WaitingCategory[chatID]
 	h.mu.RUnlock()
 	if ok && waiting {
-		categories, err := h.CategoryRepo.SearchCategory(text)
+		categories, err := h.categoryService.SearchCategory(text)
 		if err != nil {
 			msg := tgbotapi.NewMessage(chatID, "Ошибка поиска")
 			h.Bot.Send(msg)

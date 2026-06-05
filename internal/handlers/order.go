@@ -22,13 +22,12 @@ func (h *Handler) CreateOrder(input interface{}) {
 			h.Bot.Send(msg)
 			return
 		}
-		user, err = h.AuthenticateUser(token, h.UserRepo)
+		user, err = h.authService.AuthenticateUser(token)
 		if err != nil {
 			msg := tgbotapi.NewMessage(ChatID, "Ошибка аутентификации")
 			h.Bot.Send(msg)
 			return
 		}
-
 	case *tgbotapi.CallbackQuery:
 		ChatID = v.Message.Chat.ID
 		token := h.GetTokenFromCallback(v)
@@ -37,8 +36,7 @@ func (h *Handler) CreateOrder(input interface{}) {
 			h.Bot.Send(msg)
 			return
 		}
-
-		user, err = h.AuthenticateUser(token, h.UserRepo)
+		user, err = h.authService.AuthenticateUser(token)
 		if err != nil {
 			msg := tgbotapi.NewMessage(ChatID, "Ошибка аутентификации")
 			h.Bot.Send(msg)
@@ -48,7 +46,7 @@ func (h *Handler) CreateOrder(input interface{}) {
 		return
 	}
 
-	order, err := h.OrderRepo.CreateOrder(int64(user.ID))
+	order, err := h.orderService.CreateOrder(int64(user.ID))
 	if err != nil {
 		msg := tgbotapi.NewMessage(ChatID, fmt.Sprintf("Ошибка создания заказа: %v", err))
 		h.Bot.Send(msg)
@@ -82,16 +80,16 @@ func (h *Handler) Orders(update tgbotapi.Update) { // список всех за
 	}
 
 	h.ShowPagination(h.Bot, update.Message.Chat.ID, 0, 1,
-		h.OrderRepo.CountOrders,
+		h.orderService.CountOrders,
 		func(limit, offset int) ([]interface{}, error) {
-			orders, err := h.OrderRepo.PaginateOrders(limit, offset)
+			orders, err := h.orderService.PaginateOrders(limit, offset)
 			if err != nil {
 				return nil, err
 			}
 			return h.ConvertToInterfaceSlice(orders)
 		},
 		func(data interface{}) string {
-			return h.formatOrder(data.(models.Order), h.UserRepo)
+			return h.formatOrder(data.(models.Order))
 		},
 		"заказы",
 		"allorders",
@@ -119,7 +117,7 @@ func (h *Handler) DeleteOrder(update tgbotapi.Update) { // удаление за
 		h.Bot.Send(msg)
 		return
 	}
-	order, err := h.OrderRepo.SearchOrder(orderID)
+	order, err := h.orderService.SearchOrder(orderID)
 	if err != nil {
 		msg := tgbotapi.NewMessage(update.Message.Chat.ID, fmt.Sprintf("Ошибка поиска заказа: %v", err))
 		h.Bot.Send(msg)
@@ -133,7 +131,7 @@ func (h *Handler) DeleteOrder(update tgbotapi.Update) { // удаление за
 
 	h.mu.Lock()
 	h.WaitingConfirm[update.Message.Chat.ID] = func() error {
-		return h.OrderRepo.DeleteOrder(orderID)
+		return h.orderService.DeleteOrder(orderID)
 	}
 	h.mu.Unlock()
 	msg := tgbotapi.NewMessage(update.Message.Chat.ID,
@@ -153,14 +151,14 @@ func (h *Handler) ConfirmOrder(callback *tgbotapi.CallbackQuery) {
 		return
 	}
 
-	user, err := h.AuthenticateUser(token, h.UserRepo)
+	user, err := h.authService.AuthenticateUser(token)
 	if err != nil {
 		msg := tgbotapi.NewMessage(ChatID, "Ошибка аутентификации")
 		h.Bot.Send(msg)
 		return
 	}
 
-	orderID, err := h.OrderRepo.ConfirmOrder(user.ID)
+	orderID, err := h.orderService.ConfirmOrder(user.ID)
 	if err != nil {
 		msg := tgbotapi.NewMessage(ChatID, fmt.Sprintf("Ошибка подтверждения заказа: %v", err))
 		h.Bot.Send(msg)
@@ -183,13 +181,12 @@ func (h *Handler) Cart(input interface{}) {
 			h.Bot.Send(msg)
 			return
 		}
-		user, err = h.AuthenticateUser(token, h.UserRepo)
+		user, err = h.authService.AuthenticateUser(token)
 		if err != nil {
 			msg := tgbotapi.NewMessage(ChatID, "Ошибка аутентификации")
 			h.Bot.Send(msg)
 			return
 		}
-
 	case *tgbotapi.CallbackQuery:
 		ChatID = v.Message.Chat.ID
 		token := h.GetTokenFromCallback(v)
@@ -198,8 +195,7 @@ func (h *Handler) Cart(input interface{}) {
 			h.Bot.Send(msg)
 			return
 		}
-
-		user, err = h.AuthenticateUser(token, h.UserRepo)
+		user, err = h.authService.AuthenticateUser(token)
 		if err != nil {
 			msg := tgbotapi.NewMessage(ChatID, "Ошибка аутентификации")
 			h.Bot.Send(msg)
@@ -209,7 +205,7 @@ func (h *Handler) Cart(input interface{}) {
 		return
 	}
 
-	cart, err := h.OrderRepo.DetailCart(int64(user.ID))
+	cart, err := h.orderService.DetailCart(int64(user.ID))
 	if err != nil {
 		msg := tgbotapi.NewMessage(ChatID, fmt.Sprintf("Ошибка загрузки корзины: %v", err))
 		h.Bot.Send(msg)

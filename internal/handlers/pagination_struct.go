@@ -29,9 +29,9 @@ func (h *Handler) Pagination(callback *tgbotapi.CallbackQuery) {
 		"products": {
 			AuthRequired: false,
 			AdminOnly:    false,
-			CountFunc:    h.ProductRepo.CountProducts,
+			CountFunc:    h.productService.CountProducts,
 			PaginationFunc: func(limit, offset int) ([]interface{}, error) {
-				products, err := h.ProductRepo.PaginateProducts(limit, offset)
+				products, err := h.productService.PaginateProducts(limit, offset)
 				if err != nil {
 					return nil, err
 				}
@@ -44,9 +44,9 @@ func (h *Handler) Pagination(callback *tgbotapi.CallbackQuery) {
 		"buyproducts": {
 			AuthRequired: true,
 			AdminOnly:    false,
-			CountFunc:    h.ProductRepo.CountProducts,
+			CountFunc:    h.productService.CountProducts,
 			PaginationFunc: func(limit, offset int) ([]interface{}, error) {
-				products, err := h.ProductRepo.PaginateProducts(limit, offset)
+				products, err := h.productService.PaginateProducts(limit, offset)
 				if err != nil {
 					return nil, err
 				}
@@ -59,9 +59,9 @@ func (h *Handler) Pagination(callback *tgbotapi.CallbackQuery) {
 		"users": {
 			AuthRequired: true,
 			AdminOnly:    true,
-			CountFunc:    h.UserRepo.CountUsers,
+			CountFunc:    h.userService.CountUsers,
 			PaginationFunc: func(limit, offset int) ([]interface{}, error) {
-				users, err := h.UserRepo.PaginateUsers(limit, offset)
+				users, err := h.userService.PaginateUsers(limit, offset)
 				if err != nil {
 					return nil, err
 				}
@@ -74,9 +74,9 @@ func (h *Handler) Pagination(callback *tgbotapi.CallbackQuery) {
 		"categories": {
 			AuthRequired: false,
 			AdminOnly:    false,
-			CountFunc:    h.CategoryRepo.CountCategories,
+			CountFunc:    h.categoryService.CountCategories,
 			PaginationFunc: func(limit, offset int) ([]interface{}, error) {
-				categories, err := h.CategoryRepo.PaginateCategory(limit, offset)
+				categories, err := h.categoryService.PaginateCategory(limit, offset)
 				if err != nil {
 					return nil, err
 				}
@@ -91,21 +91,21 @@ func (h *Handler) Pagination(callback *tgbotapi.CallbackQuery) {
 			AdminOnly:    false,
 			CountFunc: func() (int, error) {
 				UserID := callback.Message.Chat.ID
-				users, err := h.UserRepo.SearchUser(fmt.Sprintf("%d", UserID))
+				users, err := h.userService.SearchUser(fmt.Sprintf("%d", UserID))
 				if err != nil || len(users) == 0 {
 					return 0, err
 				}
 				user := users[0]
-				return h.OrderRepo.CountUserOrders(int(user.ID))
+				return h.orderService.CountUserOrders(int(user.ID))
 			},
 			PaginationFunc: func(limit, offset int) ([]interface{}, error) {
 				UserID := callback.Message.Chat.ID
-				users, err := h.UserRepo.SearchUser(fmt.Sprintf("%d", UserID))
+				users, err := h.userService.SearchUser(fmt.Sprintf("%d", UserID))
 				if err != nil || len(users) == 0 {
 					return nil, err
 				}
 				user := users[0]
-				orders, err := h.OrderRepo.PaginateUserOrders(int(user.ID), limit, offset)
+				orders, err := h.orderService.PaginateUserOrders(int(user.ID), limit, offset)
 				if err != nil {
 					return nil, err
 				}
@@ -119,10 +119,10 @@ func (h *Handler) Pagination(callback *tgbotapi.CallbackQuery) {
 			AuthRequired: true,
 			AdminOnly:    true,
 			CountFunc: func() (int, error) {
-				return h.OrderRepo.CountOrders()
+				return h.orderService.CountOrders()
 			},
 			PaginationFunc: func(limit, offset int) ([]interface{}, error) {
-				orders, err := h.OrderRepo.PaginateOrders(limit, offset)
+				orders, err := h.orderService.PaginateOrders(limit, offset)
 				if err != nil {
 					return nil, err
 				}
@@ -140,23 +140,23 @@ func (h *Handler) Pagination(callback *tgbotapi.CallbackQuery) {
 				categoryID, ok := h.SelectCategory[ChatID]
 				h.mu.RUnlock()
 				if ok {
-					return h.ProductRepo.CountProductsByCategory(fmt.Sprintf("%d", categoryID))
+					return h.productService.CountProductsByCategory(categoryID)
 				}
-				return h.CategoryRepo.CountCategories()
+				return h.categoryService.CountCategories()
 			},
 			PaginationFunc: func(limit, offset int) ([]interface{}, error) {
 				h.mu.RLock()
 				categoryID, ok := h.SelectCategory[ChatID]
 				h.mu.RUnlock()
 				if ok {
-					products, err := h.ProductRepo.PaginateProductsByCategory(
+					products, err := h.productService.PaginateProductsByCategory(
 						fmt.Sprintf("%d", categoryID), limit, offset)
 					if err != nil {
 						return nil, err
 					}
 					return h.ConvertToInterfaceSlice(products)
 				}
-				categories, err := h.CategoryRepo.PaginateCategory(limit, offset)
+				categories, err := h.categoryService.PaginateCategory(limit, offset)
 				if err != nil {
 					return nil, err
 				}
@@ -205,23 +205,10 @@ func (h *Handler) Pagination(callback *tgbotapi.CallbackQuery) {
 			}
 
 			if handler.AuthRequired {
-				token := h.GetTokenFromCallback(callback)
-				if token == "" {
-					msg := tgbotapi.NewMessage(ChatID, "Сначала выполните /login")
+				if !h.AuthenticateCommand(3, callback) {
+					msg := tgbotapi.NewMessage(callback.From.ID, "Недостаточно прав для совершения команды")
 					h.Bot.Send(msg)
-					continue
-				}
-
-				user, err := h.AuthenticateUser(token, h.UserRepo)
-				if err != nil {
-					msg := tgbotapi.NewMessage(ChatID, "Токен недействителен. Выполните /login")
-					h.Bot.Send(msg)
-					continue
-				}
-				if handler.AdminOnly && user.Role != "admin" {
-					msg := tgbotapi.NewMessage(ChatID, "Доступ только для администраторов")
-					h.Bot.Send(msg)
-					continue
+					return
 				}
 			}
 			h.ShowPagination(h.Bot, ChatID, MessageID, page,
