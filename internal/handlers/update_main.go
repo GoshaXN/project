@@ -95,8 +95,10 @@ func (h *Handler) ProcessMessage(update tgbotapi.Update) { //обработка 
 
 	chatID := update.Message.Chat.ID
 	text := update.Message.Text
-
-	if deleteFunc, ok := h.WaitingConfirm[chatID]; ok && deleteFunc != nil {
+	h.mu.RLock()
+	deleteFunc, ok := h.WaitingConfirm[chatID]
+	h.mu.RUnlock()
+	if ok && deleteFunc != nil {
 		if text == "+" {
 			if err := deleteFunc(); err != nil {
 				msg := tgbotapi.NewMessage(chatID, fmt.Sprintf("Ошибка удаления: %v", err))
@@ -113,8 +115,10 @@ func (h *Handler) ProcessMessage(update tgbotapi.Update) { //обработка 
 		}
 		return
 	}
-
-	if waiting, ok := h.WaitingProduct[chatID]; ok && waiting {
+	h.mu.RLock()
+	waiting, ok := h.WaitingProduct[chatID]
+	h.mu.RUnlock()
+	if ok && waiting {
 		products, err := h.ProductRepo.SearchProduct(text)
 		if err != nil {
 			msg := tgbotapi.NewMessage(chatID, "Ошибка поиска")
@@ -130,11 +134,15 @@ func (h *Handler) ProcessMessage(update tgbotapi.Update) { //обработка 
 			msg := tgbotapi.NewMessage(chatID, response)
 			h.Bot.Send(msg)
 		}
+		h.mu.Lock()
 		h.WaitingProduct[chatID] = false
+		h.mu.Unlock()
 		return
 	}
-
-	if waiting, ok := h.WaitingUser[chatID]; ok && waiting {
+	h.mu.RLock()
+	waiting, ok = h.WaitingUser[chatID]
+	h.mu.RUnlock()
+	if ok && waiting {
 		users, err := h.UserRepo.SearchUser(text)
 		if err != nil {
 			msg := tgbotapi.NewMessage(chatID, "Ошибка поиска")
@@ -150,11 +158,15 @@ func (h *Handler) ProcessMessage(update tgbotapi.Update) { //обработка 
 			msg := tgbotapi.NewMessage(chatID, response)
 			h.Bot.Send(msg)
 		}
+		h.mu.Lock()
 		h.WaitingUser[chatID] = false
+		h.mu.Unlock()
 		return
 	}
-
-	if waiting, ok := h.WaitingCategory[chatID]; ok && waiting {
+	h.mu.RLock()
+	waiting, ok = h.WaitingCategory[chatID]
+	h.mu.RUnlock()
+	if ok && waiting {
 		categories, err := h.CategoryRepo.SearchCategory(text)
 		if err != nil {
 			msg := tgbotapi.NewMessage(chatID, "Ошибка поиска")
@@ -170,7 +182,9 @@ func (h *Handler) ProcessMessage(update tgbotapi.Update) { //обработка 
 			msg := tgbotapi.NewMessage(chatID, response)
 			h.Bot.Send(msg)
 		}
+		h.mu.Lock()
 		h.WaitingCategory[chatID] = false
+		h.mu.Unlock()
 		return
 	}
 	msg := tgbotapi.NewMessage(chatID, "Неизвестная команда")

@@ -41,6 +41,7 @@ func (h *Handler) Register(update tgbotapi.Update) { //Регистрация
 		h.Bot.Send(msg)
 		return
 	}
+
 	users, err := h.UserRepo.SearchUserTGID(TelegramID)
 
 	if err != nil && !strings.Contains(err.Error(), "user not found") { //ошибка отсутствия юзера
@@ -73,7 +74,9 @@ func (h *Handler) Register(update tgbotapi.Update) { //Регистрация
 				h.Bot.Send(msg)
 				return
 			}
+			h.mu.Lock()
 			h.UserTokens[update.Message.Chat.ID] = token
+			h.mu.Unlock()
 			msg := tgbotapi.NewMessage(update.Message.Chat.ID,
 				fmt.Sprintf("Пароль установлен для пользователя %s. Сессия активна 10 минут.",
 					users.FirstName))
@@ -108,8 +111,9 @@ func (h *Handler) Register(update tgbotapi.Update) { //Регистрация
 			h.Bot.Send(msg)
 			return
 		}
-
+		h.mu.Lock()
 		h.UserTokens[update.Message.Chat.ID] = token
+		h.mu.Unlock()
 		msgToUser := tgbotapi.NewMessage(TelegramID,
 			fmt.Sprintf("Ваш пароль для аккаунта ID=%d установлен", NewUser.ID))
 		h.Bot.Send(msgToUser)
@@ -125,7 +129,7 @@ func (h *Handler) Login(update tgbotapi.Update) { //Вход в аккаунт
 	args := update.Message.CommandArguments()
 	if args == "" {
 		msg := tgbotapi.NewMessage(update.Message.Chat.ID,
-			"Используйте команду:\n/login password|TelegramID")
+			"Используйте команду:\n/login password|UserID\nКоманда: /login password будет входить в текущий аккаунт")
 		h.Bot.Send(msg)
 		return
 	}
@@ -183,7 +187,9 @@ func (h *Handler) Login(update tgbotapi.Update) { //Вход в аккаунт
 		h.Bot.Send(msg)
 		return
 	}
+	h.mu.Lock()
 	h.UserTokens[update.Message.Chat.ID] = token
+	h.mu.Unlock()
 	msg := tgbotapi.NewMessage(update.Message.Chat.ID,
 		fmt.Sprintf("Здравствуйте, %s!\nВаш статус: %s\nID: %d\nСессия активна 10 минут",
 			users.FirstName, users.Role, users.ID))
@@ -192,6 +198,7 @@ func (h *Handler) Login(update tgbotapi.Update) { //Вход в аккаунт
 
 func (h *Handler) Logout(update tgbotapi.Update) { //выход из аккаунта
 	chatID := update.Message.Chat.ID
+	h.mu.Lock()
 	delete(h.UserTokens, chatID)
 	delete(h.SelectProduct, chatID)
 	delete(h.SelectCategory, chatID)
@@ -202,7 +209,7 @@ func (h *Handler) Logout(update tgbotapi.Update) { //выход из аккау�
 	delete(h.WaitingCategory, chatID)
 	delete(h.WaitingConfirm, chatID)
 	delete(h.PaginationState, chatID)
-
+	h.mu.Unlock()
 	msg := tgbotapi.NewMessage(chatID, "Успешный выход. Вход: /login")
 	h.Bot.Send(msg)
 }
@@ -228,8 +235,9 @@ func (h *Handler) handleTokenCommand(update tgbotapi.Update) { //обновле�
 		h.Bot.Send(msg)
 		return
 	}
-
+	h.mu.Lock()
 	h.UserTokens[update.Message.Chat.ID] = NewToken
+	h.mu.Unlock()
 	msg := tgbotapi.NewMessage(update.Message.Chat.ID,
 		fmt.Sprintf("Ваш новый токен: %s\nДействует 10 минут", NewToken))
 	h.Bot.Send(msg)

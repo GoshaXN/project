@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"project/internal/repo"
+	"sync"
 	"time"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
@@ -25,6 +26,8 @@ type Handler struct {
 	SelectProduct   map[int64]int
 	SelectQuantity  map[int64]int
 	SelectCategory  map[int64]int
+
+	mu sync.RWMutex
 }
 
 type JWTConfig struct {

@@ -68,12 +68,12 @@ func (r *ProductRepo) AllProducts() ([]models.Product, error) {
 
 func (r *ProductRepo) ProductsByCategory(category interface{}) ([]models.Product, error) {
 	query := `
-        SELECT products.id, products.name, products.description, products.price, products.quantity, products.category_id, 
-               products.weight, products.flavor, products.brand, products.servings, products.is_active, products.created_at
-        FROM products 
-        JOIN categories ON products.category_id = categories.id
+        SELECT prod.id, prod.name, prod.description, prod.price, prod.quantity, prod.category_id, 
+               prod.weight, prod.flavor, prod.brand, prod.servings, prod.is_active, prod.created_at
+        FROM products prod
+        JOIN categories cat ON prod.category_id = cat.id
         WHERE products.is_active = true 
-          AND (products.category_id::text ILIKE $1 OR categories.name ILIKE '%' || $1 || '%')
+          AND (prod.category_id::text ILIKE $1 OR cat.name ILIKE '%' || $1 || '%')
         ORDER BY products.id`
 
 	rows, err := r.db.Query(query, category) //query для SELECT
@@ -169,7 +169,7 @@ func (r *ProductRepo) PaginateProducts(limit, offset int) ([]models.Product, err
         SELECT id, name, description, price, quantity, category_id, weight, flavor, servings, is_active, created_at
         FROM products
         WHERE is_active = true
-        ORDER BY created_at ASC, id ASC
+        ORDER BY id ASC, created_at ASC
         LIMIT $1 OFFSET $2`
 
 	rows, err := r.db.Query(query, limit, offset) //query для SELECT
@@ -242,6 +242,6 @@ func (r *ProductRepo) CountProductsByCategory(categoryID string) (int, error) {
 	}
 	var count int
 	query := `SELECT COUNT(*) FROM products WHERE is_active = true AND category_id = $1`
-	err = r.db.QueryRow(query, id).Scan(&count) //query для SELECT с одной строкой
+	err = r.db.QueryRow(query, id).Scan(&count) //query для SELECT
 	return count, err
 }

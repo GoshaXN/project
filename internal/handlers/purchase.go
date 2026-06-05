@@ -71,7 +71,9 @@ func (h *Handler) Purchase(callback *tgbotapi.CallbackQuery) {
 		}
 
 		product := products[0]
+		h.mu.Lock()
 		h.SelectProduct[ChatID] = productID
+		h.mu.Unlock()
 		response := fmt.Sprintf("Выбран товар: %s (%s)\nЦена: %.2f руб.\nВыберите количество:", product.Name, product.Flavor, product.Price)
 		keyboard := h.CreateBuyingKeyboard(1) //создает клавиатуру покупки
 		editMsg := tgbotapi.NewEditMessageText(ChatID, MessageID, response)
@@ -104,9 +106,14 @@ func (h *Handler) Purchase(callback *tgbotapi.CallbackQuery) {
 		case "quantity":
 			//action = "buying_quantity_" + fmt.Sprintf("%d", total_quantity)
 		}
+		h.mu.Lock()
 		h.SelectQuantity[ChatID] = total_quantity
+		h.mu.Unlock()
 		var response string
-		if productID, ok := h.SelectProduct[ChatID]; ok && productID > 0 {
+		h.mu.RLock()
+		productID, ok := h.SelectProduct[ChatID]
+		h.mu.RUnlock()
+		if ok && productID > 0 {
 			products, err := h.ProductRepo.SearchProduct(fmt.Sprintf("%d", productID))
 			if err == nil && len(products) > 0 {
 				product := products[0]
@@ -201,10 +208,12 @@ func (h *Handler) Purchase(callback *tgbotapi.CallbackQuery) {
 									fmt.Sprintf("Товар добавлен в корзину\n\nЗаказ: #%d\nТовар: %s (%s)\nЦена товара: %.2f руб.\nКоличество: %d\nСумма за товар: %.2f руб.\nСумма заказа: %.2f руб.",
 										cart.Order.ID, product.Name, product.Flavor, product.Price, quantity,
 										product.Price*float64(quantity), totalSum))
+								h.mu.Lock()
 								delete(h.SelectProduct, ChatID)  // очищается состояние выбора товара
 								delete(h.SelectCategory, ChatID) // очищается состояние выбора категории
 								delete(h.BuyingState, ChatID)    // очищается состояние покупки
 								delete(h.SelectQuantity, ChatID) //очищается состояние покупки
+								h.mu.Unlock()
 								answermsg := tgbotapi.NewMessage(ChatID, "Хотите выбрать ещё товары?")
 								keyboard := tgbotapi.NewInlineKeyboardMarkup(
 									tgbotapi.NewInlineKeyboardRow(
@@ -229,11 +238,12 @@ func (h *Handler) Purchase(callback *tgbotapi.CallbackQuery) {
 
 		} else if data == "cancell" { //обработка кнопи отмены
 			//action = "cancel_purchase"
+			h.mu.Lock()
 			delete(h.SelectProduct, ChatID)
 			delete(h.SelectCategory, ChatID)
 			delete(h.BuyingState, ChatID)
 			delete(h.SelectQuantity, ChatID)
-
+			h.mu.Unlock()
 			msg := tgbotapi.NewMessage(ChatID, "Отмена")
 			h.Bot.Send(msg)
 

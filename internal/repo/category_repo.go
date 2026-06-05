@@ -36,7 +36,7 @@ func (r *CategoryRepo) AllCategories() ([]models.Category, error) {
 		WHERE is_active = true
 		ORDER BY id`
 
-	rows, err := r.db.Query(query)
+	rows, err := r.db.Query(query) //query для SELECT
 	if err != nil {
 		return nil, err
 	}
@@ -92,7 +92,7 @@ func (r *CategoryRepo) UpdateCategory(category *models.Category) error {
 		update categories
 		set name = $2, description = $3, is_active = $4
 		WHERE id = $1`
-	_, err := r.db.Exec(
+	_, err := r.db.Exec( //Exec для INSERT/UPDATE/DELETE
 		query, category.ID, category.Name, category.Description,
 		category.IsActive,
 	)
@@ -106,7 +106,7 @@ func (r *CategoryRepo) UpdateCategory(category *models.Category) error {
 func (r *CategoryRepo) DeleteCategory(categoryID int) error {
 	query := `DELETE FROM categories WHERE id = $1`
 
-	_, err := r.db.Exec(query, categoryID)
+	_, err := r.db.Exec(query, categoryID) //Exec для INSERT/UPDATE/DELETE
 	if err != nil {
 		log.Printf("Ошибка удаления категории: %v", err)
 		return err
@@ -123,14 +123,14 @@ func (r *CategoryRepo) PaginateCategory(limit, offset int) ([]models.Category, e
         ORDER BY created_at ASC, id ASC
         LIMIT $1 OFFSET $2`
 
-	rows, err := r.db.Query(query, limit, offset)
+	rows, err := r.db.Query(query, limit, offset) //query для SELECT
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 
 	var categories []models.Category
-	for rows.Next() {
+	for rows.Next() { //идет по строкам и добавляет данные пока они есть. аналог while data
 		var category models.Category
 		err := rows.Scan(
 			&category.ID, &category.Name, &category.Description,

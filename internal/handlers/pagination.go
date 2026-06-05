@@ -33,17 +33,21 @@ func (h *Handler) ShowPagination(bot *tgbotapi.BotAPI, ChatID int64, MessageID i
 	if len(data) == 0 {
 		msg := tgbotapi.NewEditMessageText(ChatID, MessageID, "Нет данных!")
 		bot.Send(msg)
+		h.mu.Lock()
 		delete(h.SelectCategory, ChatID)
+		h.mu.Unlock()
 		return
 	}
 
 	pages := (count + DataOnPage - 1) / DataOnPage
+	h.mu.Lock()
 	h.PaginationState[ChatID] = PaginationState{
 		CurrentPage: Page,
 		Pages:       pages,
 		Type:        paginationType,
 		Count:       count,
 	}
+	h.mu.Unlock()
 
 	response := fmt.Sprintf("Все %s\n\n", title)
 	for _, item := range data {
@@ -188,10 +192,11 @@ func (h *Handler) CreateCategoriesKeyboard(CurrentPage, Pages int, data []interf
 }
 
 func (h *Handler) ShowBuying(bot *tgbotapi.BotAPI, ChatID int64, MessageID, total_quantity int) { //не используется но аналогия с пагинацией
-
+	h.mu.Lock()
 	h.BuyingState[ChatID] = BuyingState{
 		Total_quantity: total_quantity,
 	}
+	h.mu.Unlock()
 	keyboard := h.CreateBuyingKeyboard(total_quantity)
 	response := fmt.Sprintf("К покупке: %d", total_quantity)
 	if MessageID != 0 {

@@ -77,15 +77,19 @@ func (h *Handler) AuthMiddleware(handler func(bot *tgbotapi.BotAPI, update tgbot
 			h.Bot.Send(msg)
 			return
 		}
+		h.mu.Lock()
 		h.UserTokens[h.GetChatID(update)] = token
-
+		h.mu.Unlock()
 		handler(bot, update, user, userRepo) //вызов обработчика
 	}
 }
 func (h *Handler) GetTokenFromUpdate(update tgbotapi.Update) string { //извлечение токена из сообщения
 	ChatID := h.GetChatID(update)
 	if ChatID > 0 {
-		if token, ok := h.UserTokens[ChatID]; ok {
+		h.mu.RLock()
+		token, ok := h.UserTokens[ChatID]
+		h.mu.RUnlock()
+		if ok {
 			return token
 		}
 	}
@@ -97,12 +101,18 @@ func (h *Handler) GetTokenFromUpdate(update tgbotapi.Update) string { //извл
 		}
 	}
 	if update.Message != nil {
-		if token, ok := h.UserTokens[update.Message.Chat.ID]; ok {
+		h.mu.RLock()
+		token, ok := h.UserTokens[update.Message.Chat.ID]
+		h.mu.RUnlock()
+		if ok {
 			return token
 		}
 	}
 	if update.CallbackQuery != nil {
-		if token, ok := h.UserTokens[update.CallbackQuery.Message.Chat.ID]; ok {
+		h.mu.RLock()
+		token, ok := h.UserTokens[update.CallbackQuery.Message.Chat.ID]
+		h.mu.RUnlock()
+		if ok {
 			return token
 		}
 	}
@@ -124,15 +134,37 @@ func (h *Handler) GetChatID(update tgbotapi.Update) int64 {
 	return 0
 }
 
-func (h *Handler) CheckPermissions(userRepo *repo.UserRepo, token string, status int) error {
-	user, err := h.AuthenticateUser(token, userRepo)
-	if status == 1 && (user.Role == "user" || user.Role == "admin") {
-		return nil
-	} else if status == 2 && (user.Role == "admin") {
-		return nil
-	} else if status == 0 {
-		return nil
-	} else {
-		return err
+func (h *Handler) AuthenticateCommand(sec_level /*1 - all, 2 - auth, 3 - admin */ int, user interface{}) bool {
+
+	var ChatID int64
+	var update tgbotapi.Update
+
+	switch v := user.(type) {
+	case tgbotapi.Update:
+		ChatID = h.GetChatID(v)
+		update = v
+	case *tgbotapi.CallbackQuery:
+		ChatID = v.Message.Chat.ID
+		update = tgbotapi.Update{CallbackQuery: v}
 	}
+
+	if sec_level >= 2 {
+		token := h.GetTokenFromUpdate(update)
+		if token == "" {
+			msg := tgbotapi.NewMessage(ChatID, "Сначала выполните логин /login")
+			h.Bot.Send(msg)
+			return false
+		} else {
+			user, err := h.AuthenticateUser(token, h.UserRepo)
+			if (err != nil || user.Role != "admin") && sec_level == 3 {
+				msg := tgbotapi.NewMessage(ChatID, "Доступ только для администратора")
+				h.Bot.Send(msg)
+				return false
+			}
+		}
+		return true
+	}
+
+	return true
+
 }

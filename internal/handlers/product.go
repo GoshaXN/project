@@ -13,16 +13,9 @@ import (
 
 func (h *Handler) CreateProduct(update tgbotapi.Update) { // создание товара
 	// Проверка авторизации и прав
-	token := h.GetTokenFromUpdate(update)
-	if token == "" {
-		msg := tgbotapi.NewMessage(update.Message.Chat.ID, "Сначала выполните /login")
-		h.Bot.Send(msg)
-		return
-	}
-
-	user, err := h.AuthenticateUser(token, h.UserRepo)
-	if err != nil || user.Role != "admin" {
-		msg := tgbotapi.NewMessage(update.Message.Chat.ID, "Доступ только для администраторов")
+	access := h.AuthenticateCommand(3, update)
+	if !access {
+		msg := tgbotapi.NewMessage(update.Message.Chat.ID, "Недостаточно прав для совершения команды")
 		h.Bot.Send(msg)
 		return
 	}
@@ -55,7 +48,7 @@ func (h *Handler) CreateProduct(update tgbotapi.Update) { // создание т
 		}
 	}
 
-	err = h.ProductRepo.CreateProduct(product)
+	err := h.ProductRepo.CreateProduct(product)
 	if err != nil {
 		msg := tgbotapi.NewMessage(update.Message.Chat.ID, fmt.Sprintf("Ошибка создания товара: %v", err))
 		h.Bot.Send(msg)
@@ -98,7 +91,9 @@ func (h *Handler) SearchProduct(input interface{}) { // поиск товаро�
 		ChatID = v.Message.Chat.ID
 		searchQuery = strings.TrimSpace(v.Message.CommandArguments()) //TrimSpace удаляет пробелы в начале и конце строки
 		if searchQuery == "" {
+			h.mu.Lock()
 			h.WaitingProduct[ChatID] = true
+			h.mu.Unlock()
 			msg := tgbotapi.NewMessage(ChatID, "Укажите название товара для поиска")
 			h.Bot.Send(msg)
 			return
@@ -107,7 +102,9 @@ func (h *Handler) SearchProduct(input interface{}) { // поиск товаро�
 		log.Printf("continue")
 		ChatID = v.Message.Chat.ID
 		callbackID := v.ID
+		h.mu.Lock()
 		h.WaitingProduct[ChatID] = true
+		h.mu.Unlock()
 		msg := tgbotapi.NewMessage(ChatID, "Укажите название товара для поиска")
 		h.Bot.Send(msg)
 
@@ -248,8 +245,9 @@ func (h *Handler) DeleteProduct(update tgbotapi.Update) { // удаление т
 
 		return
 	}
-
+	h.mu.Lock()
 	h.WaitingConfirm[update.Message.Chat.ID] = func() error { return h.ProductRepo.DeleteProduct(productID) }
+	h.mu.Unlock()
 	msg := tgbotapi.NewMessage(update.Message.Chat.ID, fmt.Sprintf(
 		"Напишите + если хотите удалить товар: %s, ID = %d", product[0].Name, productID))
 	h.Bot.Send(msg)

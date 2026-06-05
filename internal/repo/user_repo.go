@@ -23,7 +23,7 @@ func (r *UserRepo) CreateUser(user *models.User, password ...string) error {
 	if len(password) > 0 && password[0] != "" {
 		hashedPassoword, err = utils.HashPassword(password[0])
 		if err != nil {
-			return fmt.Errorf("fail hash password: %v", err)
+			return fmt.Errorf("err in hash password: %v", err)
 		}
 	}
 	query := `
@@ -49,7 +49,7 @@ func (r *UserRepo) SearchUserTGID(TelegramID int64) (*models.User, error) {
         WHERE telegram_id = $1
         LIMIT 1`
 
-	rows, err := r.db.Query(searchQuery, TelegramID)
+	rows, err := r.db.Query(searchQuery, TelegramID) //query для SELECT с 1 строкой
 	if err != nil {
 		return nil, fmt.Errorf("err of search: %v", err)
 	}
@@ -83,7 +83,7 @@ func (r *UserRepo) AllUsers() ([]models.User, error) {
 	defer rows.Close()
 
 	var users []models.User
-	for rows.Next() { //построчное считывание
+	for rows.Next() { //идет по строкам и добавляет данные пока они есть. аналог while data
 		var user models.User
 		err := rows.Scan(
 			&user.ID, &user.TelegramID, &user.Username, &user.FirstName,
@@ -110,13 +110,13 @@ func (r *UserRepo) SearchUser(query string) ([]models.User, error) {
 
 	rows, err := r.db.Query(searchQuery, query)
 	if err != nil {
-		log.Panic("Ошибка: ", err)
+		log.Panic("Ошибка поиска пользователя: ", err)
 		return nil, err
 	}
 	defer rows.Close()
 
 	var users []models.User
-	for rows.Next() {
+	for rows.Next() { //идет по строкам и добавляет данные пока они есть. аналог while data
 		var user models.User
 		err := rows.Scan(
 			&user.ID, &user.TelegramID, &user.Username, &user.FirstName,
@@ -158,7 +158,7 @@ func (r *UserRepo) UpdateUser(user *models.User, updatePassword ...bool) error {
 	}
 	_, err := r.db.Exec(query, args...)
 	if err != nil {
-		log.Printf("Ошибка обновления пользователя: %v", err)
+		log.Printf("Ошибка изменения пользователя: %v", err)
 		return err
 	}
 	return nil
@@ -169,8 +169,8 @@ func (r *UserRepo) UpdatePassword(userID int, NewPassword string) error {
 	if err != nil {
 		return fmt.Errorf("error with hash password: %v", err)
 	}
-	query := "UPDATE users SET password = $1 WHERE id = $2"
-	_, err = r.db.Exec(query, hashedPassowrd, userID)
+	query := "UPDATE users SET password = $2 WHERE id = $1"
+	_, err = r.db.Exec(query, userID, hashedPassowrd)
 	if err != nil {
 		return fmt.Errorf("error update password: %v", err)
 	}
@@ -188,7 +188,7 @@ func (r *UserRepo) DeleteUser(userID int) error {
 	return nil
 }
 
-func (r *UserRepo) PaginateUser(limit, offset int) ([]models.User, error) {
+func (r *UserRepo) PaginateUsers(limit, offset int) ([]models.User, error) {
 	query := `
         SELECT id, telegram_id, username, first_name, phone, email, role, created_at
         FROM users
@@ -202,7 +202,7 @@ func (r *UserRepo) PaginateUser(limit, offset int) ([]models.User, error) {
 	defer rows.Close()
 
 	var users []models.User
-	for rows.Next() {
+	for rows.Next() { //идет по строкам и добавляет данные пока они есть. аналог while data
 		var user models.User
 		err := rows.Scan(
 			&user.ID, &user.TelegramID, &user.Username, &user.FirstName,

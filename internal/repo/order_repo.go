@@ -132,7 +132,7 @@ func (r *OrderRepo) ConfirmOrder(userID int64) (int, error) {
         UPDATE orders 
         SET status = 'confirmed' 
         WHERE id = $1`
-	_, err = r.db.Exec(UpdateQuery, orderID)
+	_, err = r.db.Exec(UpdateQuery, orderID) //Exec для INSERT/UPDATE/DELETE
 	if err != nil {
 		return 0, err
 	}
@@ -176,13 +176,43 @@ func (r *OrderRepo) DetailCart(userID int64) (*models.OrderWithItems, error) {
 }
 
 func (r *OrderRepo) AddItemToCart(orderID, productID int, quantity int, price float64) error {
+	tx, err := r.db.Begin() //начало транзакции: добавить товар в заказ. транзакция нужна ибо изменяются несколько ячеек
+	//Добавили или откатились
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err != nil {
+			tx.Rollback() //откат
+		}
+	}()
+
 	query := `
         INSERT INTO order_items (order_id, product_id, quantity, price)
         VALUES ($1, $2, $3, $4)
         ON CONFLICT (order_id, product_id) 
         DO UPDATE SET quantity = order_items.quantity + $3`
-	_, err := r.db.Exec(query, orderID, productID, quantity, price)
-	return err
+
+	_, err = tx.Exec(query, orderID, productID, quantity, price) //Exec для INSERT/UPDATE/DELETE
+	if err != nil {
+		return err
+	}
+
+	updateQuery := `
+        UPDATE orders 
+        SET amount = (
+            SELECT COALESCE(SUM(price * quantity), 0)
+            FROM order_items 
+            WHERE order_id = $1
+        )
+        WHERE id = $1`
+
+	_, err = tx.Exec(updateQuery, orderID) //Exec для INSERT/UPDATE/DELETE
+	if err != nil {
+		return err
+	}
+
+	return tx.Commit() //коммит
 }
 
 func (r *OrderRepo) SearchOrder(orderID int) (*models.Order, error) {
@@ -190,6 +220,7 @@ func (r *OrderRepo) SearchOrder(orderID int) (*models.Order, error) {
         SELECT id, user_id, amount, status, created_at
         FROM orders 
         WHERE id = $1`
+
 	var order models.Order
 	err := r.db.QueryRow(query, orderID).Scan(
 		&order.ID, &order.UserID, &order.Amount,
@@ -280,13 +311,13 @@ func (r *OrderRepo) CountUserOrders(UserID int) (int, error) { //подсчёт 
 func (r *OrderRepo) DeleteOrder(orderID int) error {
 	query := `DELETE From orders WHERE id = $1`
 
-	result, err := r.db.Exec(query, orderID)
+	result, err := r.db.Exec(query, orderID) //Exec для INSERT/UPDATE/DELETE
 	if err != nil {
 		log.Printf("Ошибка удаления заказа: %v", err)
 		return err
 	}
 
-	rowsAffected, _ := result.RowsAffected()
+	rowsAffected, _ := result.RowsAffected() //количество изменённых строк за операцию
 	if rowsAffected == 0 {
 		log.Printf("заказ с ID %d не найден", orderID)
 		return err

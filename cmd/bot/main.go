@@ -35,6 +35,7 @@ func main() {
 	log.Printf("Authorize %s", Bot.Self.UserName)
 
 	handler := handlers.NewHandler(Bot, ProductRepo, CategoryRepo, UserRepo, OrderRepo) // инициализация обработчика
+	log.Printf("Bot Started")
 
 	handler.MainHandler() // запуск обработчика
 }

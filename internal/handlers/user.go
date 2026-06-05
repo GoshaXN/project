@@ -12,16 +12,9 @@ import (
 
 func (h *Handler) CreateUser(update tgbotapi.Update) { // создание юзера
 	// Проверка авторизации и прав
-	token := h.GetTokenFromUpdate(update)
-	if token == "" {
-		msg := tgbotapi.NewMessage(update.Message.Chat.ID, "Сначала выполните /login")
-		h.Bot.Send(msg)
-		return
-	}
-
-	user, err := h.AuthenticateUser(token, h.UserRepo)
-	if err != nil || user.Role != "admin" {
-		msg := tgbotapi.NewMessage(update.Message.Chat.ID, "Доступ только для администраторов")
+	access := h.AuthenticateCommand(3, update)
+	if !access {
+		msg := tgbotapi.NewMessage(update.Message.Chat.ID, "Недостаточно прав для совершения команды")
 		h.Bot.Send(msg)
 		return
 	}
@@ -80,7 +73,7 @@ func (h *Handler) Users(update tgbotapi.Update) { // список юзеров
 	h.ShowPagination(h.Bot, update.Message.Chat.ID, 0, 1,
 		h.UserRepo.CountUsers,
 		func(limit, offset int) ([]interface{}, error) {
-			orders, err := h.UserRepo.PaginateUser(limit, offset)
+			orders, err := h.UserRepo.PaginateUsers(limit, offset)
 			if err != nil {
 				return nil, err
 			}
@@ -100,22 +93,19 @@ func (h *Handler) SearchUser(input interface{}) { //поиск юзера
 	switch v := input.(type) {
 	case tgbotapi.Update:
 		ChatID = v.Message.Chat.ID
+		update := v
 		searchQuery = strings.TrimSpace(v.Message.CommandArguments()) //TrimSpace удаляет пробелы в начале и конце строки
 		// Проверка авторизации и прав
-		token := h.GetTokenFromUpdate(v)
-		if token == "" {
-			msg := tgbotapi.NewMessage(ChatID, "Сначала выполните /login")
-			h.Bot.Send(msg)
-			return
-		}
-		user, err := h.AuthenticateUser(token, h.UserRepo)
-		if err != nil || user.Role != "admin" {
-			msg := tgbotapi.NewMessage(ChatID, "Доступ только для администраторов")
+		access := h.AuthenticateCommand(3, update)
+		if !access {
+			msg := tgbotapi.NewMessage(ChatID, "Недостаточно прав для совершения команды")
 			h.Bot.Send(msg)
 			return
 		}
 		if searchQuery == "" {
+			h.mu.Lock()
 			h.WaitingUser[ChatID] = true
+			h.mu.Unlock()
 			msg := tgbotapi.NewMessage(ChatID, "Укажите имя юзера для поиска")
 			h.Bot.Send(msg)
 			return
@@ -124,20 +114,15 @@ func (h *Handler) SearchUser(input interface{}) { //поиск юзера
 		ChatID = v.Message.Chat.ID
 		callbackID := v.ID
 		// Проверка авторизации и прав
-		token := h.GetTokenFromCallback(v)
-		if token == "" {
-			msg := tgbotapi.NewMessage(ChatID, "Сначала выполните /login")
+		access := h.AuthenticateCommand(3, callbackID)
+		if !access {
+			msg := tgbotapi.NewMessage(ChatID, "Недостаточно прав для совершения команды")
 			h.Bot.Send(msg)
 			return
 		}
-
-		user, err := h.AuthenticateUser(token, h.UserRepo)
-		if err != nil || user.Role != "admin" {
-			msg := tgbotapi.NewMessage(ChatID, "Доступ только для администраторов")
-			h.Bot.Send(msg)
-			return
-		}
+		h.mu.Lock()
 		h.WaitingUser[ChatID] = true
+		h.mu.Unlock()
 		msg := tgbotapi.NewMessage(ChatID, "Укажите имя юзера для поиска")
 		h.Bot.Send(msg)
 		callbackConfig := tgbotapi.NewCallback(callbackID, "") //отправка этого конфига нужна для того чтобы кнопка не была нажата
@@ -167,20 +152,12 @@ func (h *Handler) SearchUser(input interface{}) { //поиск юзера
 
 func (h *Handler) UpdateUser(update tgbotapi.Update) { //изменение юзера
 	// Проверка авторизации и прав
-	token := h.GetTokenFromUpdate(update)
-	if token == "" {
-		msg := tgbotapi.NewMessage(update.Message.Chat.ID, "Сначала выполните /login")
+	access := h.AuthenticateCommand(3, update)
+	if !access {
+		msg := tgbotapi.NewMessage(update.Message.Chat.ID, "Отказано в доступе")
 		h.Bot.Send(msg)
 		return
 	}
-
-	user, err := h.AuthenticateUser(token, h.UserRepo)
-	if err != nil || user.Role != "admin" {
-		msg := tgbotapi.NewMessage(update.Message.Chat.ID, "Доступ только для администраторов")
-		h.Bot.Send(msg)
-		return
-	}
-
 	data := strings.Split(update.Message.CommandArguments(), "|")
 
 	if len(data) < 7 {
@@ -227,16 +204,9 @@ func (h *Handler) UpdateUser(update tgbotapi.Update) { //изменение юз
 
 func (h *Handler) DeleteUser(update tgbotapi.Update) { // удаление пользователя
 	// Проверка авторизации и прав
-	token := h.GetTokenFromUpdate(update)
-	if token == "" {
-		msg := tgbotapi.NewMessage(update.Message.Chat.ID, "Сначала выполните /login")
-		h.Bot.Send(msg)
-		return
-	}
-
-	user, err := h.AuthenticateUser(token, h.UserRepo)
-	if err != nil || user.Role != "admin" {
-		msg := tgbotapi.NewMessage(update.Message.Chat.ID, "Доступ только для администраторов")
+	access := h.AuthenticateCommand(3, update)
+	if !access {
+		msg := tgbotapi.NewMessage(update.Message.Chat.ID, "Недостаточно прав для совершения команды")
 		h.Bot.Send(msg)
 		return
 	}
@@ -259,7 +229,9 @@ func (h *Handler) DeleteUser(update tgbotapi.Update) { // удаление по�
 		h.Bot.Send(msg)
 		return
 	}
+	h.mu.Lock()
 	h.WaitingConfirm[update.Message.Chat.ID] = func() error { return h.UserRepo.DeleteUser(userID) }
+	h.mu.Unlock()
 	msg := tgbotapi.NewMessage(update.Message.Chat.ID, fmt.Sprintf(
 		"Напишите + если хотите удалить пользователя: %s, %s, ID = %d", users[0].FirstName, users[0].Username, userID))
 	h.Bot.Send(msg)

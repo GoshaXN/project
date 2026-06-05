@@ -27,11 +27,12 @@ func (h *Handler) Start(input interface{}) { // кнопка старт
 	}
 
 	// Очищаем состояния
+	h.mu.Lock()
 	delete(h.SelectProduct, ChatID)
 	delete(h.SelectCategory, ChatID)
 	delete(h.BuyingState, ChatID)
 	delete(h.SelectQuantity, ChatID)
-
+	h.mu.Unlock()
 	keyboard := tgbotapi.NewInlineKeyboardMarkup(
 		tgbotapi.NewInlineKeyboardRow(
 			tgbotapi.NewInlineKeyboardButtonData("Все товары", "products"),
@@ -43,21 +44,18 @@ func (h *Handler) Start(input interface{}) { // кнопка старт
 		),
 		tgbotapi.NewInlineKeyboardRow(
 			tgbotapi.NewInlineKeyboardButtonData("Корзина", "cart"),
-			tgbotapi.NewInlineKeyboardButtonData("Категории", "categories"),
+			tgbotapi.NewInlineKeyboardButtonData("Выбрать товар для покупки", "buyproducts"),
 		),
 		tgbotapi.NewInlineKeyboardRow(
 			tgbotapi.NewInlineKeyboardButtonData("Все категории", "categories"),
 			tgbotapi.NewInlineKeyboardButtonData("Поиск категорий", "search_category"),
 		),
 		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData("Помощь по командам", "help"),
-		),
-		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData("Заказы", "orders"),
+			tgbotapi.NewInlineKeyboardButtonData("Мои заказы", "orders"),
 			tgbotapi.NewInlineKeyboardButtonData("Создать заказ", "create_order"),
 		),
 		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData("Выбрать товар для покупки", "buyproducts"),
+			tgbotapi.NewInlineKeyboardButtonData("Помощь по командам", "help"),
 		),
 	)
 	msg.ReplyMarkup = keyboard

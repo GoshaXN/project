@@ -39,7 +39,8 @@ func main() {
 	successes := 0
 	for _, migration := range migrations {
 		migrationPath := filepath.Join(projectRoot, "migrations", migration)
-		if err := Migrations(db, migrationPath); err != nil {
+		err := Migrations(db, migrationPath)
+		if err != nil {
 			log.Printf("Error: %s in migration: %v", err, migration)
 		} else {
 			log.Printf("Succesfull migration: %s", migration)

@@ -5,6 +5,7 @@ import (
 	"project/internal/models"
 	"strconv"
 	"strings"
+	_ "time"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
@@ -60,7 +61,7 @@ func (h *Handler) Pagination(callback *tgbotapi.CallbackQuery) {
 			AdminOnly:    true,
 			CountFunc:    h.UserRepo.CountUsers,
 			PaginationFunc: func(limit, offset int) ([]interface{}, error) {
-				users, err := h.UserRepo.PaginateUser(limit, offset)
+				users, err := h.UserRepo.PaginateUsers(limit, offset)
 				if err != nil {
 					return nil, err
 				}
@@ -128,20 +129,26 @@ func (h *Handler) Pagination(callback *tgbotapi.CallbackQuery) {
 				return h.ConvertToInterfaceSlice(orders)
 			},
 			formatFunc:   func(data interface{}) string { return h.formatOrderPagination(data.(models.Order)) },
-			title:        "все заказы",
+			title:        "заказы",
 			showKeyboard: false,
 		},
 		"buycategories": {
 			AuthRequired: true,
 			AdminOnly:    false,
 			CountFunc: func() (int, error) {
-				if categoryID, ok := h.SelectCategory[ChatID]; ok {
+				h.mu.RLock()
+				categoryID, ok := h.SelectCategory[ChatID]
+				h.mu.RUnlock()
+				if ok {
 					return h.ProductRepo.CountProductsByCategory(fmt.Sprintf("%d", categoryID))
 				}
 				return h.CategoryRepo.CountCategories()
 			},
 			PaginationFunc: func(limit, offset int) ([]interface{}, error) {
-				if categoryID, ok := h.SelectCategory[ChatID]; ok {
+				h.mu.RLock()
+				categoryID, ok := h.SelectCategory[ChatID]
+				h.mu.RUnlock()
+				if ok {
 					products, err := h.ProductRepo.PaginateProductsByCategory(
 						fmt.Sprintf("%d", categoryID), limit, offset)
 					if err != nil {

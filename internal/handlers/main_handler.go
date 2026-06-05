@@ -13,9 +13,9 @@ func (h *Handler) MainHandler() {
 		h.LogUpdate(update)
 
 		if update.CallbackQuery != nil {
-			h.CallbackHandler(update.CallbackQuery)
+			go h.CallbackHandler(update.CallbackQuery) //го многопоточность
 		} else if update.Message != nil {
-			h.UpdateHandler(update)
+			go h.UpdateHandler(update) //го многопоточность
 		}
 	}
 }

@@ -11,23 +11,14 @@ import (
 )
 
 func (h *Handler) CreateCategory(update tgbotapi.Update) { //Создание категории
-
-	// Проверка авторизации и прав
-	token := h.GetTokenFromUpdate(update)
-	if token == "" {
-		msg := tgbotapi.NewMessage(update.Message.Chat.ID, "Сначала выполните /login")
+	access := h.AuthenticateCommand(3, update)
+	if !access {
+		msg := tgbotapi.NewMessage(update.Message.Chat.ID, "Недостаточно прав для совершения команды")
 		h.Bot.Send(msg)
 		return
 	}
 
-	user, err := h.AuthenticateUser(token, h.UserRepo)
-	if err != nil || user.Role != "admin" {
-		msg := tgbotapi.NewMessage(update.Message.Chat.ID, "Доступ только для администраторов")
-		h.Bot.Send(msg)
-		return
-	}
-
-	// Остальная логика из telegram.go
+	// остальная логика из telegram.go
 	data := strings.Split(update.Message.CommandArguments(), "|")
 
 	if len(data) < 3 {
@@ -94,7 +85,9 @@ func (h *Handler) SearchCategory(input interface{}) { // поиск катего
 		ChatID = v.Message.Chat.ID
 		searchQuery = strings.TrimSpace(v.Message.CommandArguments()) //TrimSpace - удаляет пробелы в начале и в конце строки
 		if searchQuery == "" {
+			h.mu.Lock()
 			h.WaitingCategory[ChatID] = true
+			h.mu.Unlock()
 			msg := tgbotapi.NewMessage(ChatID, "Укажите название категории для поиска")
 			h.Bot.Send(msg)
 			return
@@ -102,7 +95,9 @@ func (h *Handler) SearchCategory(input interface{}) { // поиск катего
 	case *tgbotapi.CallbackQuery:
 		ChatID = v.Message.Chat.ID
 		callbackID := v.ID
+		h.mu.Lock()
 		h.WaitingCategory[ChatID] = true
+		h.mu.Unlock()
 		msg := tgbotapi.NewMessage(ChatID, "Укажите название категории для поиска")
 		h.Bot.Send(msg)
 
@@ -141,7 +136,9 @@ func (h *Handler) SearchByCategory(update tgbotapi.Update) { // поиск то�
 
 	if searchQuery == "" {
 		msg := tgbotapi.NewMessage(update.Message.Chat.ID, "Укажите название категории для поиска")
+		h.mu.Lock()
 		h.WaitingCategory[update.Message.Chat.ID] = true
+		h.mu.Unlock()
 		h.Bot.Send(msg)
 		return
 	}
@@ -168,17 +165,10 @@ func (h *Handler) SearchByCategory(update tgbotapi.Update) { // поиск то�
 }
 
 func (h *Handler) UpdateCategory(update tgbotapi.Update) { // обновление категории
-	// Проверка авторизации и прав
-	token := h.GetTokenFromUpdate(update)
-	if token == "" {
-		msg := tgbotapi.NewMessage(update.Message.Chat.ID, "Сначала выполните /login")
-		h.Bot.Send(msg)
-		return
-	}
 
-	user, err := h.AuthenticateUser(token, h.UserRepo)
-	if err != nil || user.Role != "admin" {
-		msg := tgbotapi.NewMessage(update.Message.Chat.ID, "Доступ только для администраторов")
+	access := h.AuthenticateCommand(3, update)
+	if !access {
+		msg := tgbotapi.NewMessage(update.Message.Chat.ID, "Недостаточно прав для совершения команды")
 		h.Bot.Send(msg)
 		return
 	}
@@ -225,17 +215,10 @@ func (h *Handler) UpdateCategory(update tgbotapi.Update) { // обновлени
 }
 
 func (h *Handler) DeleteCategory(update tgbotapi.Update) { // удаление категории
-	// Проверка авторизации и прав
-	token := h.GetTokenFromUpdate(update)
-	if token == "" {
-		msg := tgbotapi.NewMessage(update.Message.Chat.ID, "Сначала выполните /login")
-		h.Bot.Send(msg)
-		return
-	}
 
-	user, err := h.AuthenticateUser(token, h.UserRepo)
-	if err != nil || user.Role != "admin" {
-		msg := tgbotapi.NewMessage(update.Message.Chat.ID, "Доступ только для администраторов")
+	access := h.AuthenticateCommand(3, update)
+	if !access {
+		msg := tgbotapi.NewMessage(update.Message.Chat.ID, "Недостаточно прав для совершения команды")
 		h.Bot.Send(msg)
 		return
 	}
@@ -259,7 +242,9 @@ func (h *Handler) DeleteCategory(update tgbotapi.Update) { // удаление �
 		return
 
 	}
+	h.mu.Lock()
 	h.WaitingConfirm[update.Message.Chat.ID] = func() error { return h.CategoryRepo.DeleteCategory(categoryID) }
+	h.mu.Unlock()
 	msg := tgbotapi.NewMessage(update.Message.Chat.ID, fmt.Sprintf(
 		"Напишите + если хотите удалить категорию: %s, %s, ID = %d", categories[0].Name, categories[0].Description, categoryID))
 	h.Bot.Send(msg)

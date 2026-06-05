@@ -74,12 +74,13 @@ func (h *Handler) CreateOrder(input interface{}) {
 
 func (h *Handler) Orders(update tgbotapi.Update) { // список всех заказов
 	// Проверка авторизации и прав
-	token := h.GetTokenFromUpdate(update)
-	if token == "" {
-		msg := tgbotapi.NewMessage(update.Message.Chat.ID, "Сначала выполните /login")
+	access := h.AuthenticateCommand(3, update)
+	if !access {
+		msg := tgbotapi.NewMessage(update.Message.Chat.ID, "Недостаточно прав для совершения команды")
 		h.Bot.Send(msg)
 		return
 	}
+
 	h.ShowPagination(h.Bot, update.Message.Chat.ID, 0, 1,
 		h.OrderRepo.CountOrders,
 		func(limit, offset int) ([]interface{}, error) {
@@ -99,15 +100,9 @@ func (h *Handler) Orders(update tgbotapi.Update) { // список всех за
 
 func (h *Handler) DeleteOrder(update tgbotapi.Update) { // удаление заказа
 	// Проверка авторизации и прав
-	token := h.GetTokenFromUpdate(update)
-	if token == "" {
-		msg := tgbotapi.NewMessage(update.Message.Chat.ID, "Сначала выполните /login")
-		h.Bot.Send(msg)
-		return
-	}
-	user, err := h.AuthenticateUser(token, h.UserRepo)
-	if err != nil || user.Role != "admin" {
-		msg := tgbotapi.NewMessage(update.Message.Chat.ID, "Доступ только для администраторов")
+	access := h.AuthenticateCommand(3, update)
+	if !access {
+		msg := tgbotapi.NewMessage(update.Message.Chat.ID, "Недостаточно прав для совершения команды")
 		h.Bot.Send(msg)
 		return
 	}
@@ -136,9 +131,11 @@ func (h *Handler) DeleteOrder(update tgbotapi.Update) { // удаление за
 		return
 	}
 
+	h.mu.Lock()
 	h.WaitingConfirm[update.Message.Chat.ID] = func() error {
 		return h.OrderRepo.DeleteOrder(orderID)
 	}
+	h.mu.Unlock()
 	msg := tgbotapi.NewMessage(update.Message.Chat.ID,
 		fmt.Sprintf("Напишите + если хотите удалить заказ с ID = %d\nПользователь: %d\nСумма: %.2f\nСтатус: %s",
 			order.ID, order.UserID, order.Amount, order.Status))
@@ -169,7 +166,6 @@ func (h *Handler) ConfirmOrder(callback *tgbotapi.CallbackQuery) {
 		h.Bot.Send(msg)
 		return
 	}
-
 	msg := tgbotapi.NewMessage(ChatID, fmt.Sprintf("Заказ #%d успешно сформирован!", orderID))
 	h.Bot.Send(msg)
 }
